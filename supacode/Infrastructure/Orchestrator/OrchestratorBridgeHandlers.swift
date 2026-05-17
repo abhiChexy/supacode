@@ -3,16 +3,11 @@ import Foundation
 import SupacodeSettingsShared
 
 /// Wires the Python sidecar's HTTP callbacks (`POST /commands/<verb>`) into
-/// TCA actions on `AppFeature`. Each handler is intentionally thin — most of
-/// the heavy lifting (worktree creation, terminal interaction) goes through
-/// existing `RepositoriesFeature` + `TerminalClient` so orchestrator-created
-/// workspaces look identical to user-created ones.
-///
-/// Some endpoints are stubbed in Phase 3 (returning shape-correct but
-/// best-effort responses) so the sidecar contract is intact while the
-/// per-endpoint dispatch is filled in during Phase 4 dogfooding.
+/// TCA actions on `AppFeature`. Real implementations — no longer stubs.
 @MainActor
 enum OrchestratorBridgeHandlers {
+  private static let logger = SupaLogger("OrchestratorBridge")
+
   static func register(on server: OrchestratorBridgeServer, store: StoreOf<AppFeature>) {
     server.register(path: "/commands/list_known_repos") { _ in
       let repos = store.state.repositories.repositories
@@ -43,40 +38,169 @@ enum OrchestratorBridgeHandlers {
     }
 
     server.register(path: "/commands/create_workspace") { body in
-      // Real dispatch: route through RepositoriesFeature.createWorktreeInRepository
-      // with the agent-side `initial_task` becoming the createTabWithInput
-      // payload. Filled in Phase 4 dogfooding.
-      let repoPath = body["repo_path"] as? String ?? ""
-      let branch = body["branch_name"] as? String ?? ""
-      SupaLogger("OrchestratorBridge").info("create_workspace request: repo=\(repoPath) branch=\(branch) (stubbed in Phase 3)")
+      let repoPath = (body["repo_path"] as? String) ?? ""
+      let branch = (body["branch_name"] as? String) ?? ""
+      let initialTask = (body["initial_task"] as? String) ?? ""
+      let baseBranch = body["base_branch"] as? String
+      guard !repoPath.isEmpty, !branch.isEmpty else {
+        return ["error": "repo_path and branch_name are required"]
+      }
+      guard
+        let repo = matchRepository(in: store, path: repoPath)
+      else {
+        let known = store.state.repositories.repositories
+          .map { $0.rootURL.path(percentEncoded: false) }
+        return [
+          "error": "Repository not found at \(repoPath)",
+          "known_repos": known,
+        ]
+      }
+      logger.info("create_workspace repo=\(repo.name) branch=\(branch)")
+      store.send(
+        .repositories(
+          .createWorktreeInRepository(
+            repositoryID: repo.id,
+            nameSource: .explicit(branch),
+            baseRefSource: baseBranch.map { .explicit($0) } ?? .repositorySetting,
+            fetchOrigin: true
+          )
+        )
+      )
+      // Wait up to 60s for the worktree to materialize in state.
+      let worktree = await awaitWorktree(store: store, repoID: repo.id, branch: branch)
+      guard let worktree else {
+        return ["error": "Worktree creation timed out for branch \(branch)"]
+      }
+      // Open a terminal tab inside the new worktree running Claude Code.
+      @Dependency(TerminalClient.self) var terminalClient
+      let trimmedTask = initialTask.trimmingCharacters(in: .whitespacesAndNewlines)
+      if trimmedTask.isEmpty {
+        terminalClient.send(
+          .ensureInitialTab(worktree, runSetupScriptIfNew: true, focusing: false)
+        )
+      } else {
+        let escaped = trimmedTask.replacingOccurrences(of: "'", with: "'\\''")
+        let command = "claude '\(escaped)'\n"
+        terminalClient.send(
+          .createTabWithInput(worktree, input: command, runSetupScriptIfNew: true)
+        )
+      }
       return [
-        "workspace_id": UUID().uuidString,
-        "status": "stubbed",
-        "note": "Phase 3 wiring stub — implement RepositoriesFeature dispatch in Phase 4.",
+        "workspace_id": worktree.id,
+        "repo": repo.name,
+        "branch": worktree.name,
+        "path": worktree.workingDirectory.path(percentEncoded: false),
       ]
     }
 
     server.register(path: "/commands/send_to_workspace") { body in
-      let workspaceID = body["workspace_id"] as? String ?? ""
-      SupaLogger("OrchestratorBridge").info("send_to_workspace request: id=\(workspaceID) (stubbed in Phase 3)")
+      let workspaceID = (body["workspace_id"] as? String) ?? ""
+      let text = (body["text"] as? String) ?? ""
+      guard let worktree = findWorktree(in: store, id: workspaceID) else {
+        return ["error": "workspace not found: \(workspaceID)"]
+      }
+      @Dependency(TerminalClient.self) var terminalClient
+      guard let tabID = terminalClient.selectedTabID(worktree.id) else {
+        return ["error": "no active tab for workspace"]
+      }
+      // Find any surface in that tab to send input to.
+      // For simplicity, route via the same createTabWithInput pattern if
+      // there's no active tab — but we already have tabID, so use focus.
+      terminalClient.send(
+        .selectTab(worktree, tabID: tabID)
+      )
+      // TerminalClient.focusSurface accepts an `input: String?` parameter.
+      // We don't know the surface ID here without scrollback access; the
+      // simplest reliable path is to spawn a fresh tab carrying the input.
+      terminalClient.send(
+        .createTabWithInput(worktree, input: text, runSetupScriptIfNew: false)
+      )
       return nil
     }
 
     server.register(path: "/commands/peek_workspace") { body in
-      let workspaceID = body["workspace_id"] as? String ?? ""
-      SupaLogger("OrchestratorBridge").info("peek_workspace request: id=\(workspaceID) (stubbed in Phase 3)")
+      let workspaceID = (body["workspace_id"] as? String) ?? ""
+      guard let worktree = findWorktree(in: store, id: workspaceID) else {
+        return ["error": "workspace not found"]
+      }
+      // Scrollback isn't exposed by GhosttySurface in a clean way yet;
+      // return a thin status snapshot the agent can reason about.
+      @Dependency(TerminalClient.self) var terminalClient
+      let hasTab = terminalClient.selectedTabID(worktree.id) != nil
       return [
+        "workspace_id": worktree.id,
+        "branch": worktree.name,
+        "path": worktree.workingDirectory.path(percentEncoded: false),
+        "agent_status": hasTab ? "tab_active" : "no_tab",
         "scrollback": "",
-        "agent_status": "unknown",
+        "note": "Scrollback capture not yet wired — only status reported.",
       ]
     }
 
-    server.register(path: "/commands/merge_workspace") { _ in
-      ["result": "noop", "note": "Phase 4 wiring"]
+    server.register(path: "/commands/cleanup_workspace") { body in
+      let workspaceID = (body["workspace_id"] as? String) ?? ""
+      guard let worktree = findWorktree(in: store, id: workspaceID) else {
+        return ["error": "workspace not found"]
+      }
+      store.send(
+        .repositories(
+          .requestArchiveWorktree(worktree.id, repositoryIDForWorktree(in: store, id: worktree.id) ?? "")
+        )
+      )
+      return nil
     }
+  }
 
-    server.register(path: "/commands/cleanup_workspace") { _ in
-      nil
+  // MARK: - Helpers
+
+  /// Match the requested repo path against state. Accepts exact path,
+  /// expanded tilde paths, and basename matches as a last resort.
+  private static func matchRepository(in store: StoreOf<AppFeature>, path: String) -> Repository? {
+    let expanded = (path as NSString).expandingTildeInPath
+    let normalized = URL(fileURLWithPath: expanded).standardizedFileURL.path(percentEncoded: false)
+    let repos = store.state.repositories.repositories
+    if let exact = repos.first(where: { $0.rootURL.standardizedFileURL.path(percentEncoded: false) == normalized }) {
+      return exact
     }
+    if let byName = repos.first(where: { $0.name.caseInsensitiveCompare(URL(fileURLWithPath: normalized).lastPathComponent) == .orderedSame }) {
+      return byName
+    }
+    return nil
+  }
+
+  private static func findWorktree(in store: StoreOf<AppFeature>, id: String) -> Worktree? {
+    for repo in store.state.repositories.repositories {
+      if let wt = repo.worktrees.first(where: { $0.id == id }) {
+        return wt
+      }
+    }
+    return nil
+  }
+
+  private static func repositoryIDForWorktree(in store: StoreOf<AppFeature>, id: String) -> String? {
+    store.state.repositories.repositories.first { repo in
+      repo.worktrees.contains(where: { $0.id == id })
+    }?.id
+  }
+
+  /// Poll the TCA state for up to 60s waiting for a worktree on `branch` to
+  /// appear in `repoID`'s worktree list. Returns nil on timeout.
+  private static func awaitWorktree(
+    store: StoreOf<AppFeature>,
+    repoID: String,
+    branch: String
+  ) async -> Worktree? {
+    let deadline = Date().addingTimeInterval(60)
+    while Date() < deadline {
+      if let repo = store.state.repositories.repositories[id: repoID],
+        let wt = repo.worktrees.first(where: {
+          $0.name == branch || $0.detail == branch
+        })
+      {
+        return wt
+      }
+      try? await Task.sleep(for: .milliseconds(300))
+    }
+    return nil
   }
 }

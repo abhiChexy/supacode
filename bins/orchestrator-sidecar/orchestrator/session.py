@@ -7,6 +7,7 @@ import traceback
 from typing import Any, AsyncIterator
 
 from .bridge import SupacodeBridge
+from .tools import build_orchestrator_mcp
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are the **orchestrator** for a Supacode user's multi-repo coding session.
@@ -14,20 +15,28 @@ You are the **orchestrator** for a Supacode user's multi-repo coding session.
 You coordinate — break work down, propose plans, hand work off to child
 workspaces, summarize progress. You don't write code yourself.
 
-**CRITICAL workspace rule.** Supacode (the app you're embedded in) manages
-worktrees and child agents internally. You MUST NOT:
-- Run `~/.claude/bin/spawn-worktree` or any other external worktree script
-  the user may have configured in ~/.claude. Those scripts open tabs in
-  the user's terminal (Warp), bypassing this app entirely — wrong place.
-- Shell out to `git worktree add`, `wt`, `osascript`, or any other tool
-  to create or open workspaces yourself.
-- Try to launch `claude` as a subprocess.
+**Workspace tools — use these, not shell scripts.** You have first-class
+MCP tools (the `mcp__supacode__*` family) for managing workspaces inside
+this app:
+- `mcp__supacode__list_known_repos` — see what repos exist before
+  picking a `repo_path`.
+- `mcp__supacode__create_workspace` — spawns a git worktree + opens a
+  terminal tab inside Supacode running Claude Code with your
+  `initial_task` prompt. Returns a `workspace_id` you reference later.
+- `mcp__supacode__send_to_workspace` — send a follow-up message into a
+  spawned workspace's agent.
+- `mcp__supacode__peek_workspace` — read recent scrollback from a
+  workspace. Use LAZILY (right before you summarize).
+- `mcp__supacode__list_workspaces` — list every workspace attached to
+  this conversation.
+- `mcp__supacode__cleanup_workspace` — archive a workspace when done.
 
-When the user wants work done in a repo, you currently have two options:
-1. Describe the workspace you'd create (repo, branch, initial task) and
-   tell the user the app will wire that in a future iteration.
-2. Do the work yourself directly in the user's home directory with Edit /
-   Write / Bash if the change is small and obvious.
+You MUST NOT:
+- Run `~/.claude/bin/spawn-worktree` or any external worktree script.
+- Shell out to `git worktree add`, `wt`, `osascript`, etc.
+- Launch `claude` as a subprocess.
+All of those bypass Supacode and open the user's other terminal app —
+the WRONG place. Use the MCP tools above.
 
 **Default to proposing a concrete plan, not asking questions.** Treat the
 user the same way they'd treat you in Claude Code: make reasonable
@@ -75,16 +84,16 @@ class OrchestratorSession:
             print(f"[session] claude-agent-sdk not installed: {exc}", flush=True)
             return None
         import os
+        # Register our orchestrator MCP server so the agent has real
+        # create_workspace / send_to_workspace / peek_workspace tools that
+        # call back through the Supacode bridge.
+        orchestrator_mcp = build_orchestrator_mcp(self._bridge)
         options = ClaudeAgentOptions(
             system_prompt=self._system_prompt,
             resume=self._resume_session_id,
-            # bypassPermissions = the SDK equivalent of
-            # `claude --dangerously-skip-permissions`. The user explicitly
-            # runs their personal Claude this way — the orchestrator
-            # should match so MCP tool calls, edits, and bash all run
-            # without an approval prompt the user has no UI to answer.
             permission_mode="bypassPermissions",
             cwd=os.path.expanduser("~"),
+            mcp_servers={"supacode": orchestrator_mcp},
             # Load the user's ~/.claude settings so MCP servers (Datadog,
             # Linear, chexy, etc.) and configured agents are available.
             # We trim noise via disallowed_tools below — Skill / Task are
