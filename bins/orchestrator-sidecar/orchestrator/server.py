@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from typing import Any
@@ -12,6 +13,7 @@ from .session import OrchestratorSession
 
 
 _SESSIONS: dict[str, OrchestratorSession] = {}
+_PUMP_TASKS: dict[str, asyncio.Task] = {}
 _WS_CLIENTS: set[web.WebSocketResponse] = set()
 
 
@@ -97,12 +99,26 @@ async def send_message(request: web.Request) -> web.Response:
     body = await request.json()
     content = body.get("content", "")
 
-    async def pump() -> None:
-        async for event in session.send_user_message(content):
-            await _broadcast(event)
-        await _broadcast({"type": "turn_complete", "conversation_id": cid})
+    # Cancel any prior pump for this conversation so a stuck one can't
+    # block follow-up turns or interrupts.
+    if prior := _PUMP_TASKS.pop(cid, None):
+        prior.cancel()
 
-    request.app["loop_tasks"].add(request.app.loop.create_task(pump()))
+    async def pump() -> None:
+        try:
+            async for event in session.send_user_message(content):
+                await _broadcast(event)
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            print(f"[pump] {cid} failed: {exc}", flush=True)
+        finally:
+            await _broadcast({"type": "turn_complete", "conversation_id": cid})
+            _PUMP_TASKS.pop(cid, None)
+
+    task = request.app.loop.create_task(pump())
+    _PUMP_TASKS[cid] = task
+    request.app["loop_tasks"].add(task)
     return web.Response(status=202)
 
 
@@ -113,12 +129,19 @@ async def interrupt_session(request: web.Request) -> web.Response:
     session = _SESSIONS.get(cid)
     if session is None:
         return web.Response(status=404)
+    # 1) Cancel the in-flight pump task immediately so the UI's
+    # 'Thinking…' state clears regardless of the SDK's response.
+    if task := _PUMP_TASKS.pop(cid, None):
+        task.cancel()
+    # 2) Best-effort SDK interrupt with a hard timeout. If the SDK's
+    # subprocess is already dead, interrupt() can hang forever.
     try:
-        await session.interrupt()
+        await asyncio.wait_for(session.interrupt(), timeout=2.0)
+    except asyncio.TimeoutError:
+        print(f"[interrupt] {cid} SDK interrupt timed out — continuing", flush=True)
     except Exception as exc:
-        print(f"[interrupt] failed: {exc}", flush=True)
-    # Always broadcast turn_complete so the UI unsticks even if the SDK
-    # interrupt doesn't actually terminate the pending operation.
+        print(f"[interrupt] {cid} failed: {exc}", flush=True)
+    # 3) Always notify the UI so the stop button reliably ends the turn.
     await _broadcast({
         "type": "turn_complete",
         "conversation_id": cid,
