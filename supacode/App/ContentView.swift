@@ -35,16 +35,21 @@ struct ContentView: View {
   }
 
   var body: some View {
-    HStack(spacing: 0) {
-      sidebar
-        .frame(width: effectiveSidebarWidth)
-      Divider()
-        .background(Theme.Color.borderSubtle)
-      detailPane
+    VStack(spacing: 0) {
+      topBar
+      Divider().background(Theme.Color.borderSubtle)
+      HStack(spacing: 0) {
+        sidebar
+          .frame(width: effectiveSidebarWidth)
+        Divider()
+          .background(Theme.Color.borderSubtle)
+        detailPane
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Theme.Color.backgroundSecondary.ignoresSafeArea())
-    .containerBackground(Theme.Color.backgroundSecondary, for: .window)
+    .containerBackground(Theme.Color.backgroundPrimary, for: .window)
     .disabled(!store.repositories.isInitialLoadComplete)
     .onChange(of: scenePhase) { _, newValue in
       store.send(.scenePhaseChanged(newValue))
@@ -127,6 +132,55 @@ struct ContentView: View {
     )
   }
 
+  /// Unified top bar that spans the full window width, holding the traffic
+  /// lights (left, via window padding) and our app-level chrome. Same
+  /// visual treatment as Cursor / Warp.
+  private var topBar: some View {
+    HStack(spacing: Theme.Spacing.s) {
+      // Reserve space for the macOS traffic lights on the left.
+      Spacer().frame(width: 72)
+      Button {
+        toggleLeftSidebar()
+      } label: {
+        Image(systemName: "sidebar.left")
+          .font(.system(size: 12, weight: .medium))
+          .foregroundStyle(Theme.Color.textSecondary)
+          .frame(width: 26, height: 22)
+          .background(Theme.Color.backgroundElevated)
+          .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.pill))
+      }
+      .buttonStyle(.plain)
+      .help("Toggle sidebar (⌘B)")
+      Spacer()
+      if let cid = store.conversations.selectedConversationID,
+        let title = store.conversations.conversations[id: cid]?.title,
+        !title.isEmpty
+      {
+        Text(title)
+          .font(Theme.Font.body.weight(.medium))
+          .foregroundStyle(Theme.Color.textPrimary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+      }
+      Spacer()
+      Button {
+        isSearchPresented = true
+      } label: {
+        Image(systemName: "magnifyingglass")
+          .font(.system(size: 11))
+          .foregroundStyle(Theme.Color.textSecondary)
+          .frame(width: 26, height: 22)
+          .background(Theme.Color.backgroundElevated)
+          .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.pill))
+      }
+      .buttonStyle(.plain)
+      .help("Search conversations (⌘F)")
+    }
+    .padding(.horizontal, Theme.Spacing.s)
+    .frame(height: 36)
+    .background(Theme.Color.backgroundPrimary)
+  }
+
   @ViewBuilder
   private var sidebar: some View {
     Group {
@@ -143,8 +197,6 @@ struct ContentView: View {
           // middle region.
           Theme.Color.backgroundPrimary.ignoresSafeArea()
           VStack(spacing: 0) {
-            // Reserve space for the macOS traffic lights at the top.
-            Spacer().frame(height: 28)
             ConversationsSidebarSectionView(
               store: store.scope(state: \.conversations, action: \.conversations)
             )
