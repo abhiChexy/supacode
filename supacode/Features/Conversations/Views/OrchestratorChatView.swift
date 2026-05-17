@@ -151,22 +151,19 @@ struct OrchestratorChatView: View {
 
   private var composer: some View {
     HStack(alignment: .bottom, spacing: Theme.Spacing.s) {
-      TextField("Message orchestrator…", text: $draft, axis: .vertical)
-        .lineLimit(1...6)
-        .textFieldStyle(.plain)
-        .font(Theme.Font.body)
+      ComposerTextEditor(text: $draft, onCommit: send)
+        .frame(minHeight: 28, maxHeight: 160)
         .padding(.horizontal, Theme.Spacing.m)
         .padding(.vertical, Theme.Spacing.s)
         .background(Theme.Color.backgroundElevated)
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.input))
-        .onSubmit(send)
       Button(action: send) {
         Image(systemName: "arrow.up.circle.fill")
           .font(.system(size: 22))
           .foregroundStyle(canSend ? Theme.Color.accent : Theme.Color.textTertiary)
       }
       .buttonStyle(.plain)
-      .keyboardShortcut(.return, modifiers: .command)
+      .keyboardShortcut(.return, modifiers: [])
       .disabled(!canSend)
     }
     .padding(Theme.Spacing.m)
@@ -303,6 +300,24 @@ private struct ToolCallCard: View {
 
   private var toolName: String { JSON.string(use.content, key: "tool") ?? "tool" }
   private var inputJSON: String { JSON.prettyValue(use.content, key: "input") ?? "{}" }
+
+  /// Single-line summary of the most salient input field for this tool.
+  private var inputSummary: String {
+    guard let data = use.content.data(using: .utf8),
+      let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+      let input = dict["input"] as? [String: Any]
+    else { return "" }
+    let candidate: String? = {
+      switch toolName {
+      case "Bash": return input["command"] as? String
+      case "Read", "Edit", "Write": return input["file_path"] as? String
+      case "Grep", "Glob": return input["pattern"] as? String
+      case "WebFetch", "WebSearch": return (input["url"] as? String) ?? (input["query"] as? String)
+      default: return input["title"] as? String ?? input["description"] as? String
+      }
+    }()
+    return (candidate ?? "").split(separator: "\n").first.map(String.init) ?? ""
+  }
   private var resultPretty: String? {
     guard let result else { return nil }
     return JSON.prettyValue(result.content, key: "result") ?? result.content
@@ -355,6 +370,13 @@ private struct ToolCallCard: View {
           Text(toolName)
             .font(Theme.Font.monoSmall)
             .foregroundStyle(Theme.Color.textSecondary)
+          if !inputSummary.isEmpty {
+            Text(inputSummary)
+              .font(Theme.Font.monoSmall)
+              .foregroundStyle(Theme.Color.textTertiary)
+              .lineLimit(1)
+              .truncationMode(.middle)
+          }
           Spacer()
           statusIcon
         }
