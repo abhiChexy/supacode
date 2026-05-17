@@ -111,7 +111,10 @@ struct ContentView: View {
     if let id = store.conversations.selectedConversationID,
       let conversation = store.conversations.conversations[id: id]
     {
-      OrchestratorChatPlaceholderView(conversation: conversation)
+      OrchestratorChatView(
+        store: store.scope(state: \.conversations, action: \.conversations),
+        conversation: conversation
+      )
     } else {
       WorktreeDetailView(store: store, terminalManager: terminalManager)
     }
