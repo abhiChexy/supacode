@@ -15,6 +15,19 @@ struct ConversationFeature {
     var inFlightConversationIDs: Set<UUID> = []
     /// Per-conversation runtime info — model, cwd, usage. Not persisted.
     var runtimeByConversationID: [UUID: ConversationRuntime] = [:]
+    /// Latest rate-limit snapshot per window type (five_hour, weekly_messages,
+    /// weekly_opus, etc.). Account-wide, not per-conversation. Updated by
+    /// the most recent RateLimitEvent.
+    var rateLimitWindows: [String: RateLimitWindow] = [:]
+  }
+
+  struct RateLimitWindow: Equatable {
+    var window: String
+    var status: String?
+    var utilization: Double?
+    var resetsAt: Date?
+    var overageStatus: String?
+    var overageResetsAt: Date?
   }
 
   struct ConversationRuntime: Equatable {
@@ -286,9 +299,20 @@ struct ConversationFeature {
       runtime.totalCacheReadTokens += cacheReadTokens
       runtime.totalCacheCreationTokens += cacheCreationTokens
       if let costUSD { runtime.totalCostUSD += costUSD }
-      // Effective context-window usage for the latest turn.
       runtime.lastTurnContextTokens = inputTokens + cacheReadTokens + cacheCreationTokens
       state.runtimeByConversationID[conversationID] = runtime
+      return .none
+
+    case .rateLimit(let window, let status, let utilization, let resetsAt, let overageStatus, let overageResetsAt):
+      guard let window else { return .none }
+      state.rateLimitWindows[window] = RateLimitWindow(
+        window: window,
+        status: status,
+        utilization: utilization,
+        resetsAt: resetsAt,
+        overageStatus: overageStatus,
+        overageResetsAt: overageResetsAt
+      )
       return .none
     }
   }

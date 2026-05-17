@@ -10,6 +10,9 @@ struct OrchestratorChatView: View {
   @State private var draft: String = ""
   @State private var isUserScrolledAway = false
   @State private var isInspectorPresented = false
+  @State private var bottomAnchorY: CGFloat?
+  @State private var containerBottomY: CGFloat?
+  @State private var scrollProxy: ScrollViewProxy?
 
   private var isInFlight: Bool {
     store.inFlightConversationIDs.contains(conversation.id)
@@ -116,10 +119,28 @@ struct OrchestratorChatView: View {
           Color.clear
             .frame(height: 1)
             .id("bottom-anchor")
-            .onAppear { isUserScrolledAway = false }
-            .onDisappear { isUserScrolledAway = true }
+            .background(
+              GeometryReader { proxy in
+                Color.clear
+                  .preference(key: BottomVisibilityKey.self, value: proxy.frame(in: .global).minY)
+              }
+            )
         }
         .padding(Theme.Spacing.l)
+        .background(
+          GeometryReader { outer in
+            Color.clear
+              .preference(key: ScrollContainerKey.self, value: outer.frame(in: .global).maxY)
+          }
+        )
+      }
+      .onPreferenceChange(BottomVisibilityKey.self) { anchorY in
+        bottomAnchorY = anchorY
+        recomputeScrollAway()
+      }
+      .onPreferenceChange(ScrollContainerKey.self) { containerY in
+        containerBottomY = containerY
+        recomputeScrollAway()
       }
       .onChange(of: conversation.orchestratorMessages.count) { _, _ in
         autoScroll(proxy)
@@ -136,6 +157,22 @@ struct OrchestratorChatView: View {
           proxy.scrollTo("bottom-anchor", anchor: .bottom)
         }
       }
+      .background(
+        // Capture proxy for the Jump button.
+        Color.clear
+          .onAppear { scrollProxy = proxy }
+      )
+    }
+  }
+
+  private func recomputeScrollAway() {
+    guard let bottom = bottomAnchorY, let container = containerBottomY else { return }
+    // If the bottom anchor is more than 80pt below the visible container,
+    // we're scrolled away. Hysteresis prevents the pill from flickering
+    // during small autoscrolls.
+    let away = bottom > container + 80
+    if away != isUserScrolledAway {
+      isUserScrolledAway = away
     }
   }
 
@@ -153,6 +190,11 @@ struct OrchestratorChatView: View {
 
   private var scrollToBottomPill: some View {
     Button {
+      if let scrollProxy {
+        withAnimation(Theme.Motion.messageFade) {
+          scrollProxy.scrollTo("bottom-anchor", anchor: .bottom)
+        }
+      }
       isUserScrolledAway = false
     } label: {
       HStack(spacing: 4) {
@@ -353,7 +395,6 @@ struct OrchestratorChatView: View {
     Context window: \(pct)% used
     \(Self.compact(runtime.lastTurnContextTokens)) / \(Self.compact(runtime.contextWindow)) tokens
 
-    Cost this conversation: $\(String(format: "%.4f", runtime.totalCostUSD))
     Total input · output · cache reads:
     \(runtime.totalInputTokens) · \(runtime.totalOutputTokens) · \(runtime.totalCacheReadTokens)
     """
@@ -400,6 +441,20 @@ struct OrchestratorChatView: View {
         draft += " " + snippet + " "
       }
     }
+  }
+}
+
+private struct BottomVisibilityKey: PreferenceKey {
+  static let defaultValue: CGFloat? = nil
+  static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) {
+    value = nextValue() ?? value
+  }
+}
+
+private struct ScrollContainerKey: PreferenceKey {
+  static let defaultValue: CGFloat? = nil
+  static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) {
+    value = nextValue() ?? value
   }
 }
 

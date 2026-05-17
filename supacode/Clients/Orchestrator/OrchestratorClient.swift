@@ -93,6 +93,7 @@ nonisolated enum OrchestratorEvent: Equatable, Sendable {
   case turnComplete(conversationID: UUID, sessionID: String?)
   case sessionInfo(conversationID: UUID, model: String?, permissionMode: String?, cwd: String?)
   case usage(conversationID: UUID, inputTokens: Int, outputTokens: Int, cacheReadTokens: Int, cacheCreationTokens: Int, costUSD: Double?)
+  case rateLimit(window: String?, status: String?, utilization: Double?, resetsAt: Date?, overageStatus: String?, overageResetsAt: Date?)
   case error(conversationID: UUID?, message: String)
 }
 

@@ -236,6 +236,7 @@ def _normalize_message(raw: Any, conversation_id: str) -> list[dict[str, Any]]:
     try:
         from claude_agent_sdk import (  # type: ignore[import-not-found]
             AssistantMessage,
+            RateLimitEvent,
             ResultMessage,
             SystemMessage,
             TextBlock,
@@ -304,6 +305,30 @@ def _normalize_message(raw: Any, conversation_id: str) -> list[dict[str, Any]]:
             "type": "turn_complete",
             "session_id": getattr(raw, "session_id", None),
         })
+    elif isinstance(raw, RateLimitEvent):
+        info = getattr(raw, "rate_limit_info", None)
+        if info is not None:
+            data = getattr(info, "raw", None)
+            if not isinstance(data, dict):
+                data = {
+                    "status": getattr(info, "status", None),
+                    "rateLimitType": getattr(info, "rate_limit_type", None),
+                    "resetsAt": getattr(info, "resets_at", None),
+                    "utilization": getattr(info, "utilization", None),
+                    "overageStatus": getattr(info, "overage_status", None),
+                    "overageResetsAt": getattr(info, "overage_resets_at", None),
+                }
+            out.append({
+                **base,
+                "type": "rate_limit",
+                "status": data.get("status"),
+                "rate_limit_type": data.get("rateLimitType"),
+                "resets_at": data.get("resetsAt"),
+                "utilization": data.get("utilization"),
+                "overage_status": data.get("overageStatus"),
+                "overage_resets_at": data.get("overageResetsAt"),
+                "is_using_overage": data.get("isUsingOverage"),
+            })
     elif isinstance(raw, SystemMessage):
         data = getattr(raw, "data", None)
         if isinstance(data, dict) and data.get("subtype") == "init":

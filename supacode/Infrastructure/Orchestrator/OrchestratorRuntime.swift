@@ -348,6 +348,17 @@ nonisolated final class OrchestratorRuntime: @unchecked Sendable {
         cacheCreationTokens: (dict["cache_creation_input_tokens"] as? Int) ?? 0,
         costUSD: dict["cost_usd"] as? Double
       )
+    case "rate_limit":
+      let resetsAt = (dict["resets_at"] as? Double).map { Date(timeIntervalSince1970: $0) }
+      let overageResetsAt = (dict["overage_resets_at"] as? Double).map { Date(timeIntervalSince1970: $0) }
+      event = .rateLimit(
+        window: dict["rate_limit_type"] as? String,
+        status: dict["status"] as? String,
+        utilization: dict["utilization"] as? Double,
+        resetsAt: resetsAt,
+        overageStatus: dict["overage_status"] as? String,
+        overageResetsAt: overageResetsAt
+      )
     case "error":
       event = .error(conversationID: cid, message: dict["message"] as? String ?? "unknown")
     default:
