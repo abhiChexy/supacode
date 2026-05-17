@@ -80,20 +80,15 @@ class OrchestratorSession:
             # Disabled tools:
             # - AskUserQuestion: interactive Claude Code tool that doesn't
             #   round-trip cleanly over our pipe.
-            # - Bash: was the source of the "wall of Bash" UI mess and
-            #   slows turns considerably. The orchestrator should reason
-            #   about repos by reading code, not by shelling around.
-            # - Task: prevents subagent dispatch which would compound
-            #   latency and break the streaming UX.
+            # - Task: would spawn subagents whose chat rows the user
+            #   can't talk back to. Compounds latency too.
             # - Skill: pulls in the user's personal ~/.claude superpowers
             #   config and bloats context dramatically.
-            # Write / Edit / NotebookEdit are intentionally LEFT ENABLED so
-            # the orchestrator can actually produce artifacts (plan.md,
-            # scratch files) directly in cwd until create_workspace is
-            # wired through to spawn child workspaces.
+            # Bash / Write / Edit are LEFT ENABLED — the orchestrator
+            # genuinely needs shell to invoke spawn-worktree, git, etc.
+            # until create_workspace is wired through TCA.
             disallowed_tools=[
                 "AskUserQuestion",
-                "Bash",
                 "Task",
                 "Skill",
             ],
