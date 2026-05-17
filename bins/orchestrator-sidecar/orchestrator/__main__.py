@@ -34,6 +34,12 @@ def main() -> None:
         default="",
         help="Defense-in-depth bearer token required on every cross-process call.",
     )
+    parser.add_argument(
+        "--port-file",
+        type=str,
+        default="",
+        help="If set, write the bound port to this path after the server is ready.",
+    )
     args = parser.parse_args()
 
     try:
@@ -42,6 +48,7 @@ def main() -> None:
                 supacode_port=args.supacode_port,
                 bind_port=args.sidecar_port,
                 shared_token=args.shared_token,
+                port_file=args.port_file,
             )
         )
     except KeyboardInterrupt:

@@ -109,13 +109,18 @@ nonisolated final class OrchestratorRuntime: @unchecked Sendable {
 
   private func spawnSidecar(bridgePort: UInt16, sharedToken: String) throws {
     let sidecarDir = locateSidecarDir()
+    let venvPython = sidecarDir.appending(path: ".venv/bin/python", directoryHint: .notDirectory)
+    let portFilePath = "/tmp/supacode-orchestrator-sidecar.port"
+    try? FileManager.default.removeItem(atPath: portFilePath)
     let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.executableURL = venvPython
     process.arguments = [
-      "uv", "run", "python", "-m", "orchestrator",
+      "-u",
+      "-m", "orchestrator",
       "--supacode-port", "\(bridgePort)",
       "--sidecar-port", "0",
       "--shared-token", sharedToken,
+      "--port-file", portFilePath,
     ]
     process.currentDirectoryURL = sidecarDir
     // Apps launched via LaunchServices inherit a minimal PATH that does not
@@ -127,6 +132,9 @@ nonisolated final class OrchestratorRuntime: @unchecked Sendable {
       .reduce(into: [String]()) { acc, p in if !acc.contains(p) { acc.append(p) } }
       .joined(separator: ":")
     env["PATH"] = merged
+    // Force Python stdout/stderr unbuffered so SIDECAR_PORT=<n> reaches us
+    // immediately instead of sitting in a pipe buffer.
+    env["PYTHONUNBUFFERED"] = "1"
     process.environment = env
 
     let stdoutPipe = Pipe()
@@ -161,6 +169,8 @@ nonisolated final class OrchestratorRuntime: @unchecked Sendable {
       let handle = stdoutPipe.fileHandleForReading
       var buffer = Data()
       while let chunk = try? handle.read(upToCount: 4096), !chunk.isEmpty {
+        stderrLog.write(Data("[stdout] ".utf8))
+        stderrLog.write(chunk)
         buffer.append(chunk)
         while let nl = buffer.firstIndex(of: 0x0A) {
           let line = String(data: buffer.subdata(in: buffer.startIndex..<nl), encoding: .utf8) ?? ""
@@ -168,12 +178,30 @@ nonisolated final class OrchestratorRuntime: @unchecked Sendable {
           self?.handleSidecarStdoutLine(line)
         }
       }
+      stderrLog.write(Data("\n[stdout pipe closed]\n".utf8))
     }
     DispatchQueue.global(qos: .utility).async {
       let handle = stderrPipe.fileHandleForReading
       while let chunk = try? handle.read(upToCount: 4096), !chunk.isEmpty {
         stderrLog.write(chunk)
       }
+    }
+
+    // Poll the port file for up to 8s. This is the reliable channel — the
+    // stdout pipe can be swallowed when the app is launched via
+    // LaunchServices.
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let deadline = Date().addingTimeInterval(8)
+      while Date() < deadline {
+        if let data = try? String(contentsOfFile: portFilePath, encoding: .utf8),
+          let port = UInt16(data.trimmingCharacters(in: .whitespacesAndNewlines))
+        {
+          self?.handleSidecarStdoutLine("SIDECAR_PORT=\(port)")
+          return
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+      }
+      stderrLog.write(Data("\n[port-file poll timed out]\n".utf8))
     }
   }
 

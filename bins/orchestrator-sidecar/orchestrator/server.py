@@ -102,7 +102,7 @@ async def stream(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-async def run_server(*, supacode_port: int, bind_port: int, shared_token: str) -> None:
+async def run_server(*, supacode_port: int, bind_port: int, shared_token: str, port_file: str = "") -> None:
     app = web.Application()
     app["supacode_port"] = supacode_port
     app["shared_token"] = shared_token
@@ -120,10 +120,18 @@ async def run_server(*, supacode_port: int, bind_port: int, shared_token: str) -
     site = web.TCPSite(runner, host="127.0.0.1", port=bind_port)
     await site.start()
 
-    # Publish the bound port to the parent process.
+    # Publish the bound port to the parent process. We use a file when given
+    # one because stdout from a LaunchServices-spawned grandchild can be
+    # swallowed; the file is the reliable channel.
     actual_port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
     print(f"SIDECAR_PORT={actual_port}", flush=True)
     sys.stdout.flush()
+    if port_file:
+        try:
+            with open(port_file, "w") as f:
+                f.write(f"{actual_port}\n")
+        except OSError as exc:
+            print(f"[server] could not write port_file: {exc}", flush=True)
 
     # Block forever until cancelled.
     import asyncio
