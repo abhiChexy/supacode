@@ -228,9 +228,8 @@ struct OrchestratorChatView: View {
     .padding(.vertical, Theme.Spacing.xl)
   }
 
-  /// Group tool_use + matching tool_result into a single visual row.
-  /// Adds workspace_id to each row so the renderer can indent child
-  /// activity under a workspace header.
+  /// Group tool_use + matching tool_result into a single visual row, then
+  /// collapse runs of same-tool calls into a single `.toolCallGroup` row.
   private var messageRows: [MessageRow] {
     let messages = conversation.orchestratorMessages
     var rows: [MessageRow] = []
@@ -241,9 +240,27 @@ struct OrchestratorChatView: View {
       }
     }
     var lastWorkspaceHeader: String? = nil
+    var pendingGroup: [(OrchestratorMessage, OrchestratorMessage?)] = []
+    var pendingTool: String? = nil
+    var pendingWorkspace: String? = nil
+
+    func flushGroup() {
+      guard !pendingGroup.isEmpty, let tool = pendingTool else { return }
+      rows.append(
+        MessageRow(
+          id: pendingGroup.first!.0.id,
+          kind: .toolCallGroup(tool: tool, workspaceID: pendingWorkspace, calls: pendingGroup)
+        )
+      )
+      pendingGroup.removeAll()
+      pendingTool = nil
+      pendingWorkspace = nil
+    }
+
     for m in messages {
-      // Insert a workspace header when entering / leaving a child stream.
+      // Workspace header on workspace transitions.
       if m.workspaceID != lastWorkspaceHeader {
+        flushGroup()
         if let ws = m.workspaceID {
           rows.append(MessageRow(id: UUID(), kind: .workspaceHeader(workspaceID: ws)))
         }
@@ -255,11 +272,19 @@ struct OrchestratorChatView: View {
       case .toolUse:
         let toolID = JSON.string(m.content, key: "id") ?? ""
         let result = resultsByID[toolID]
-        rows.append(MessageRow(id: m.id, kind: .toolCall(use: m, result: result)))
+        let toolName = JSON.string(m.content, key: "tool") ?? "tool"
+        if toolName != pendingTool {
+          flushGroup()
+          pendingTool = toolName
+          pendingWorkspace = m.workspaceID
+        }
+        pendingGroup.append((m, result))
       default:
+        flushGroup()
         rows.append(MessageRow(id: m.id, kind: .text(m)))
       }
     }
+    flushGroup()
     return rows
   }
 
@@ -281,16 +306,16 @@ struct OrchestratorChatView: View {
         }
       }
       .padding(.leading, indent)
-    case .toolCall(let use, let result):
-      ToolCallCard(
-        use: use,
-        result: result,
+    case .toolCallGroup(let tool, let workspaceID, let calls):
+      ToolCallGroupRow(
+        tool: tool,
+        calls: calls,
         isTurnInFlight: isInFlight,
         onAnswerQuestion: { answer in
           store.send(.sendUserMessage(conversationID: conversation.id, content: answer))
         }
       )
-      .padding(.leading, use.workspaceID != nil ? Theme.Spacing.l : 0)
+      .padding(.leading, workspaceID != nil ? Theme.Spacing.l : 0)
     case .workspaceHeader(let wsID):
       HStack(spacing: Theme.Spacing.s) {
         Image(systemName: "arrow.triangle.branch")
@@ -829,7 +854,7 @@ private struct MessageRow: Identifiable {
 
   enum Kind {
     case text(OrchestratorMessage)
-    case toolCall(use: OrchestratorMessage, result: OrchestratorMessage?)
+    case toolCallGroup(tool: String, workspaceID: String?, calls: [(OrchestratorMessage, OrchestratorMessage?)])
     case workspaceHeader(workspaceID: String)
   }
 }
@@ -930,6 +955,204 @@ private struct ThinkingRow: View {
 
   private func scale(for index: Int) -> CGFloat {
     dots == index ? 1.4 : 1.0
+  }
+}
+
+/// Compact grouped row for N consecutive same-tool calls. All-success
+/// groups render as a single thin line; pending or errored groups
+/// auto-expand so the user can see what happened. Click the header to
+/// toggle expansion manually.
+private struct ToolCallGroupRow: View {
+  let tool: String
+  let calls: [(OrchestratorMessage, OrchestratorMessage?)]
+  let isTurnInFlight: Bool
+  let onAnswerQuestion: (String) -> Void
+
+  @State private var expanded: Bool = false
+
+  private var anyPending: Bool { calls.contains(where: { $0.1 == nil }) }
+  private var anyError: Bool {
+    calls.contains(where: { _, r in
+      guard let r else { return false }
+      let lower = r.content.lowercased()
+      return lower.contains("\"error\":") || lower.contains("\"is_error\": true")
+    })
+  }
+  private var summary: String {
+    let count = calls.count
+    if count == 1, let first = calls.first?.0 {
+      let s = inputSummary(for: first)
+      return s.isEmpty ? tool : "\(tool)  \(s)"
+    }
+    return "\(count) \(tool) calls"
+  }
+  private var statusColor: Color {
+    if anyError { return Theme.Color.statusError }
+    if anyPending && isTurnInFlight { return Theme.Color.statusSuccess }
+    return Theme.Color.textTertiary
+  }
+  private var statusIcon: String {
+    if anyError { return "xmark" }
+    if anyPending && isTurnInFlight { return "ellipsis" }
+    if anyPending { return "minus" }
+    return "checkmark"
+  }
+  private var shouldAutoExpand: Bool {
+    anyError || (anyPending && isTurnInFlight)
+  }
+  private var isExpanded: Bool { expanded || shouldAutoExpand }
+
+  private var allAskUserQuestion: [AskQuestionPayload] {
+    calls.compactMap { use, _ -> AskQuestionPayload? in
+      let toolName = JSON.string(use.content, key: "tool") ?? ""
+      guard toolName == "AskUserQuestion" else { return nil }
+      let inputJSON = JSON.prettyValue(use.content, key: "input") ?? "{}"
+      return AskQuestionPayload(rawJSON: inputJSON)
+    }
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Button {
+        withAnimation(Theme.Motion.toolExpand) { expanded.toggle() }
+      } label: {
+        HStack(spacing: Theme.Spacing.s) {
+          Image(systemName: statusIcon)
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(statusColor)
+            .frame(width: 10)
+          Image(systemName: icon(for: tool))
+            .font(.system(size: 10))
+            .foregroundStyle(Theme.Color.textTertiary)
+          Text(summary)
+            .font(Theme.Font.monoSmall)
+            .foregroundStyle(Theme.Color.textSecondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+          Spacer()
+          Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+            .font(.system(size: 8))
+            .foregroundStyle(Theme.Color.textTertiary)
+        }
+        .padding(.horizontal, Theme.Spacing.s)
+        .padding(.vertical, 4)
+        .background(Color.clear)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+
+      // Inline AskUserQuestion buttons render alongside the row even when
+      // collapsed (they need attention even at a glance).
+      ForEach(Array(allAskUserQuestion.enumerated()), id: \.offset) { _, payload in
+        AskUserQuestionInline(payload: payload, onPick: onAnswerQuestion)
+      }
+
+      if isExpanded {
+        VStack(alignment: .leading, spacing: 4) {
+          ForEach(Array(calls.enumerated()), id: \.offset) { _, pair in
+            ToolCallDetail(use: pair.0, result: pair.1)
+          }
+        }
+        .padding(.top, 2)
+        .padding(.leading, Theme.Spacing.l)
+      }
+    }
+  }
+
+  private func icon(for tool: String) -> String {
+    switch tool {
+    case "AskUserQuestion": return "questionmark.circle"
+    case "Bash": return "terminal"
+    case "Read", "Glob", "Grep": return "doc.text.magnifyingglass"
+    case "Edit", "Write", "NotebookEdit": return "pencil"
+    case "WebFetch", "WebSearch": return "globe"
+    case let n where n.hasPrefix("mcp__supacode__create_workspace"): return "folder.badge.plus"
+    case let n where n.hasPrefix("mcp__supacode__send_to_workspace"): return "paperplane"
+    case let n where n.hasPrefix("mcp__supacode__peek_workspace"): return "eye"
+    case let n where n.hasPrefix("mcp"): return "puzzlepiece.extension"
+    default: return "wrench.and.screwdriver"
+    }
+  }
+
+  private func inputSummary(for use: OrchestratorMessage) -> String {
+    guard let data = use.content.data(using: .utf8),
+      let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+      let input = dict["input"] as? [String: Any]
+    else { return "" }
+    let toolName = JSON.string(use.content, key: "tool") ?? ""
+    let candidate: String? = {
+      switch toolName {
+      case "Bash": return input["command"] as? String
+      case "Read", "Edit", "Write": return input["file_path"] as? String
+      case "Grep", "Glob": return input["pattern"] as? String
+      case "WebFetch", "WebSearch": return (input["url"] as? String) ?? (input["query"] as? String)
+      default:
+        return input["title"] as? String
+          ?? input["description"] as? String
+          ?? input["branch_name"] as? String
+          ?? input["message"] as? String
+      }
+    }()
+    return (candidate ?? "").split(separator: "\n").first.map(String.init) ?? ""
+  }
+}
+
+/// One row inside an expanded ToolCallGroupRow.
+private struct ToolCallDetail: View {
+  let use: OrchestratorMessage
+  let result: OrchestratorMessage?
+  @State private var showResult = false
+
+  private var inputSummary: String {
+    guard let data = use.content.data(using: .utf8),
+      let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+      let input = dict["input"] as? [String: Any]
+    else { return "" }
+    let toolName = JSON.string(use.content, key: "tool") ?? ""
+    let candidate: String? = {
+      switch toolName {
+      case "Bash": return input["command"] as? String
+      case "Read", "Edit", "Write": return input["file_path"] as? String
+      case "Grep", "Glob": return input["pattern"] as? String
+      case "WebFetch", "WebSearch": return (input["url"] as? String) ?? (input["query"] as? String)
+      default:
+        return input["title"] as? String
+          ?? input["description"] as? String
+          ?? input["branch_name"] as? String
+          ?? input["message"] as? String
+      }
+    }()
+    return (candidate ?? "").split(separator: "\n").first.map(String.init) ?? ""
+  }
+
+  private var resultPretty: String? {
+    guard let result else { return nil }
+    return JSON.prettyValue(result.content, key: "result") ?? result.content
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Button {
+        showResult.toggle()
+      } label: {
+        Text(inputSummary.isEmpty ? "(no input)" : inputSummary)
+          .font(Theme.Font.monoSmall)
+          .foregroundStyle(Theme.Color.textSecondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+      .buttonStyle(.plain)
+      if showResult, let resultPretty {
+        Text(resultPretty)
+          .font(Theme.Font.monoTiny)
+          .textSelection(.enabled)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(Theme.Spacing.xs)
+          .background(Theme.Color.backgroundElevated.opacity(0.5))
+          .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.pill))
+      }
+    }
   }
 }
 
