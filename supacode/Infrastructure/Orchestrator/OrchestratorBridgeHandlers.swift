@@ -130,15 +130,16 @@ enum OrchestratorBridgeHandlers {
       let workspaceID = (body["workspace_id"] as? String) ?? ""
       let text = (body["text"] as? String) ?? ""
       let trimmed = text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
-      guard !trimmed.isEmpty else { return nil }
+      guard !trimmed.isEmpty else { return ["child_text": ""] }
       guard let cidString = body["conversation_id"] as? String,
         let cid = UUID(uuidString: cidString)
       else { return ["error": "missing conversation_id"] }
       @Dependency(OrchestratorClientKey.self) var orchestrator
-      Task {
-        try? await orchestrator.messageWorkspace(cid, workspaceID, trimmed)
-      }
-      return nil
+      // Wait for the child's turn to finish so the tool result carries
+      // the child's reply — orchestrator can then say "PR is at <url>"
+      // inline without polling.
+      let reply = (try? await orchestrator.messageWorkspace(cid, workspaceID, trimmed)) ?? ""
+      return ["child_text": reply]
     }
 
     server.register(path: "/commands/peek_workspace") { body in

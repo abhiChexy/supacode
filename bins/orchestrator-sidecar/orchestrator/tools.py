@@ -83,6 +83,10 @@ def build_orchestrator_mcp(bridge, conversation_id: str):  # noqa: ANN001 — br
         },
     )
     async def send_to_workspace(args: dict[str, Any]) -> dict[str, Any]:
+        # This call blocks until the child's turn is complete. The
+        # bridge returns the child's final assistant text under
+        # 'child_text' so the orchestrator can read what the child
+        # actually did (PR URLs, file paths, etc.).
         result = await bridge.post(
             "/commands/send_to_workspace",
             {
@@ -91,7 +95,8 @@ def build_orchestrator_mcp(bridge, conversation_id: str):  # noqa: ANN001 — br
                 "text": args["message"] + "\n",
             },
         )
-        return _text(result or {"ok": True})
+        child_text = (result or {}).get("child_text", "") or "(child returned no text)"
+        return _text({"child_response": child_text})
 
     @tool(
         "peek_workspace",

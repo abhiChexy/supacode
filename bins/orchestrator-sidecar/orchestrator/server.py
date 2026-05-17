@@ -163,7 +163,7 @@ async def spawn_workspace(request: web.Request) -> web.Response:
     initial_task = body.get("initial_task", "")
     key = (cid, workspace_id)
     if key in _WORKSPACES:
-        return web.json_response({"status": "exists"})
+        return web.json_response({"status": "exists", "child_text": ""})
     session = WorkspaceSession(
         parent_conversation_id=cid,
         workspace_id=workspace_id,
@@ -171,9 +171,10 @@ async def spawn_workspace(request: web.Request) -> web.Response:
     )
     await session.start()
     _WORKSPACES[key] = session
+    child_text = ""
     if initial_task:
-        await _send_to_workspace(request.app, cid, workspace_id, initial_task)
-    return web.json_response({"status": "ok"})
+        child_text = await _send_to_workspace(request.app, cid, workspace_id, initial_task)
+    return web.json_response({"status": "ok", "child_text": child_text})
 
 
 async def message_workspace(request: web.Request) -> web.Response:
@@ -183,36 +184,36 @@ async def message_workspace(request: web.Request) -> web.Response:
     ws_id = request.match_info["workspace_id"]
     body = await request.json()
     content = body.get("content", "")
-    await _send_to_workspace(request.app, cid, ws_id, content)
-    return web.Response(status=202)
+    text = await _send_to_workspace(request.app, cid, ws_id, content)
+    return web.json_response({"status": "ok", "child_text": text})
 
 
-async def _send_to_workspace(app: web.Application, cid: str, ws_id: str, content: str) -> None:
+async def _send_to_workspace(app: web.Application, cid: str, ws_id: str, content: str) -> str:
+    """Run a child turn to completion. Streams events as they arrive AND
+    returns the final assistant text so the orchestrator-side tool call
+    can include it in its tool_result."""
     key = (cid, ws_id)
     session = _WORKSPACES.get(key)
     if session is None:
-        return
+        return f"[workspace {ws_id} not found]"
     if prior := _WORKSPACE_PUMPS.pop(key, None):
         prior.cancel()
 
-    async def pump() -> None:
-        try:
-            async for event in session.send_message(content):
-                await _broadcast(event)
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            print(f"[workspace pump] {key} failed: {exc}", flush=True)
-        finally:
-            await _broadcast({
-                "type": "workspace_turn_complete",
-                "conversation_id": cid,
-                "workspace_id": ws_id,
-            })
-            _WORKSPACE_PUMPS.pop(key, None)
+    async def on_event(event: dict[str, Any]) -> None:
+        await _broadcast(event)
 
-    task = app.loop.create_task(pump())
-    _WORKSPACE_PUMPS[key] = task
+    try:
+        text = await session.send_message(content, on_event=on_event)
+    except asyncio.CancelledError:
+        text = "[interrupted]"
+    finally:
+        await _broadcast({
+            "type": "workspace_turn_complete",
+            "conversation_id": cid,
+            "workspace_id": ws_id,
+        })
+        _WORKSPACE_PUMPS.pop(key, None)
+    return text
 
 
 async def delete_workspace(request: web.Request) -> web.Response:

@@ -113,6 +113,19 @@ class OrchestratorSession:
                 "AskUserQuestion",
                 "Task",
                 "Skill",
+                # Personal-config tools the orchestrator shouldn't reach
+                # for — they belong to the user's Claude Code workflow.
+                "ScheduleWakeup",
+                "CronCreate",
+                "CronDelete",
+                "CronList",
+                "RemoteTrigger",
+                "PushNotification",
+                "EnterPlanMode",
+                "ExitPlanMode",
+                "EnterWorktree",
+                "ExitWorktree",
+                "ShareOnboardingGuide",
             ],
             # Stream partial assistant blocks so the UI's "Thinking…"
             # turns into actual text quickly instead of after a long pause.

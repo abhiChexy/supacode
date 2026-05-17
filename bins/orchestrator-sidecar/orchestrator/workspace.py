@@ -58,30 +58,44 @@ class WorkspaceSession:
             traceback.print_exc()
             self._client = None
 
-    async def send_message(self, content: str) -> AsyncIterator[dict[str, Any]]:
+    async def send_message(
+        self,
+        content: str,
+        on_event=None,  # noqa: ANN001 — callable(event_dict) -> Awaitable[None]
+    ) -> str:
+        """Sends a message and waits for the child's turn to complete.
+        Streams every normalized event through `on_event` (so the UI
+        updates live), then returns the concatenated assistant text — so
+        the parent orchestrator can read it as a tool result.
+        """
         if self._client is None:
-            yield {"type": "error", "message": "child SDK not initialized"}
-            return
-        # Reuse the parent's event-normalizer so output shape matches.
+            if on_event:
+                await on_event({"type": "error", "message": "child SDK not initialized"})
+            return "[child SDK not initialized]"
         from .session import _normalize_message
+        assistant_text: list[str] = []
         async with self._lock:
             try:
                 await self._client.query(content)
                 async for message in self._client.receive_response():
                     for event in _normalize_message(message, self.parent_conversation_id):
-                        # Stamp workspace_id on every event so the UI knows
-                        # it's child output, not parent.
                         event["workspace_id"] = self.workspace_id
-                        yield event
+                        if event.get("type") == "assistant_delta":
+                            assistant_text.append(event.get("text", ""))
+                        if on_event:
+                            await on_event(event)
             except Exception as exc:
                 print(f"[workspace {self.workspace_id}] send failed: {exc}", flush=True)
                 traceback.print_exc()
-                yield {
-                    "type": "error",
-                    "conversation_id": self.parent_conversation_id,
-                    "workspace_id": self.workspace_id,
-                    "message": str(exc),
-                }
+                if on_event:
+                    await on_event({
+                        "type": "error",
+                        "conversation_id": self.parent_conversation_id,
+                        "workspace_id": self.workspace_id,
+                        "message": str(exc),
+                    })
+                return f"[error] {exc}"
+        return "".join(assistant_text).strip() or "(child returned no text)"
 
     async def interrupt(self) -> None:
         if self._client is None:

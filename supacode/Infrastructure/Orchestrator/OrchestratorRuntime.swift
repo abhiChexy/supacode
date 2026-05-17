@@ -147,11 +147,12 @@ nonisolated final class OrchestratorRuntime: @unchecked Sendable {
     conversationID: UUID,
     workspaceID: String,
     content: String
-  ) async throws {
-    _ = try await postJSON(
+  ) async throws -> String? {
+    let response = try await postJSON(
       path: "/sessions/\(conversationID.uuidString)/workspaces/\(workspaceID)/messages",
       body: ["content": content]
     )
+    return response?["child_text"] as? String
   }
 
   // MARK: - Sidecar lifecycle

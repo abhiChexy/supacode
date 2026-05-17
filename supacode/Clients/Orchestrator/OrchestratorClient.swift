@@ -13,7 +13,7 @@ nonisolated struct OrchestratorClient: Sendable {
   var setModel: @Sendable (_ conversationID: UUID, _ model: String) async throws -> Void
   var inspectSession: @Sendable (_ conversationID: UUID) async throws -> SessionInspection
   var spawnWorkspace: @Sendable (_ conversationID: UUID, _ workspaceID: String, _ cwd: String, _ initialTask: String) async throws -> Void
-  var messageWorkspace: @Sendable (_ conversationID: UUID, _ workspaceID: String, _ content: String) async throws -> Void
+  var messageWorkspace: @Sendable (_ conversationID: UUID, _ workspaceID: String, _ content: String) async throws -> String
   var events: @Sendable () -> AsyncStream<OrchestratorEvent>
   var isReady: @Sendable () -> Bool
 
@@ -56,7 +56,7 @@ nonisolated struct OrchestratorClient: Sendable {
         conversationID: conversationID,
         workspaceID: workspaceID,
         content: content
-      )
+      ) ?? ""
     },
     events: { OrchestratorRuntime.shared.events() },
     isReady: { OrchestratorRuntime.shared.isReady }
@@ -70,7 +70,7 @@ nonisolated struct OrchestratorClient: Sendable {
     setModel: { _, _ in },
     inspectSession: { _ in .init(raw: [:]) },
     spawnWorkspace: { _, _, _, _ in },
-    messageWorkspace: { _, _, _ in },
+    messageWorkspace: { _, _, _ in "" },
     events: { AsyncStream { $0.finish() } },
     isReady: { false }
   )
