@@ -24,7 +24,7 @@ struct ConversationsSidebarRail: View {
       }
       .buttonStyle(.plain)
       .help("Expand sidebar (⌃⌘S)")
-      .padding(.top, Theme.Spacing.s)
+      .padding(.top, 36)  // clear the macOS traffic lights
 
       Button {
         store.send(.createConversation(title: ""))

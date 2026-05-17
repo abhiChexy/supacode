@@ -143,12 +143,15 @@ struct ContentView: View {
           // middle region.
           Theme.Color.backgroundPrimary.ignoresSafeArea()
           VStack(spacing: 0) {
+            // Reserve space for the macOS traffic lights at the top.
+            Spacer().frame(height: 28)
             ConversationsSidebarSectionView(
               store: store.scope(state: \.conversations, action: \.conversations)
             )
             SidebarView(store: repositoriesStore, terminalManager: terminalManager)
               .scrollContentBackground(.hidden)
               .background(Theme.Color.backgroundPrimary)
+              .toolbar(.hidden, for: .windowToolbar)
               .frame(maxWidth: .infinity, maxHeight: .infinity)
             SidebarBottomCardView(store: store)
           }
