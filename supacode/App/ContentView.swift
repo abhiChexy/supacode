@@ -148,11 +148,13 @@ struct ContentView: View {
             ConversationsSidebarSectionView(
               store: store.scope(state: \.conversations, action: \.conversations)
             )
-            SidebarView(store: repositoriesStore, terminalManager: terminalManager)
-              .scrollContentBackground(.hidden)
-              .background(Theme.Color.backgroundPrimary)
-              .toolbar(.hidden, for: .windowToolbar)
-              .frame(maxWidth: .infinity, maxHeight: .infinity)
+            NavigationStack {
+              SidebarView(store: repositoriesStore, terminalManager: terminalManager)
+                .scrollContentBackground(.hidden)
+                .background(Theme.Color.backgroundPrimary)
+                .toolbar(.hidden, for: .automatic)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             SidebarBottomCardView(store: store)
           }
         }
