@@ -287,9 +287,11 @@ struct OrchestratorChatView: View {
         }
       )
       if runtime.totalInputTokens > 0 || runtime.totalOutputTokens > 0 {
-        Pill(icon: "circle.lefthalf.filled", label: usageLabel)
+        Pill(icon: "gauge.medium", label: usageLabel)
+          .help(usageTooltip)
       }
       Pill(icon: "folder", label: cwdShortLabel(runtime.cwd ?? NSHomeDirectory()))
+        .help("Working directory: \(runtime.cwd ?? NSHomeDirectory())")
       Spacer()
       Button {
         isInspectorPresented = true
@@ -353,6 +355,14 @@ struct OrchestratorChatView: View {
       return "\(formatted) · $\(String(format: "%.2f", runtime.totalCostUSD))"
     }
     return formatted
+  }
+
+  private var usageTooltip: String {
+    """
+    \(runtime.totalInputTokens) input + \(runtime.totalOutputTokens) output tokens
+    \(runtime.totalCacheReadTokens) cache reads
+    Cost so far: $\(String(format: "%.4f", runtime.totalCostUSD))
+    """
   }
 
   private func cwdShortLabel(_ path: String) -> String {
