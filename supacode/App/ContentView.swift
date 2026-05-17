@@ -43,7 +43,16 @@ struct ContentView: View {
         }
       }
     } detail: {
-      detailPane
+      HStack(spacing: 0) {
+        if leftSidebarVisibility == .detailOnly {
+          ConversationsSidebarRail(
+            store: store.scope(state: \.conversations, action: \.conversations),
+            onExpand: { withAnimation(.easeOut(duration: 0.2)) { leftSidebarVisibility = .all } }
+          )
+          .transition(.move(edge: .leading).combined(with: .opacity))
+        }
+        detailPane
+      }
     }
     .navigationSplitViewStyle(.automatic)
     .disabled(!store.repositories.isInitialLoadComplete)
@@ -97,9 +106,13 @@ struct ContentView: View {
       )
     }
     .background(
-      Button("") { isSearchPresented = true }
-        .keyboardShortcut("f", modifiers: .command)
-        .hidden()
+      Group {
+        Button("") { isSearchPresented = true }
+          .keyboardShortcut("f", modifiers: .command)
+        Button("") { closeCurrentConversation() }
+          .keyboardShortcut("w", modifiers: .command)
+      }
+      .hidden()
     )
     .overlay {
       CommandPaletteOverlayView(
@@ -148,6 +161,16 @@ struct ContentView: View {
         store: store.scope(state: \.conversations, action: \.conversations)
       )
     }
+  }
+
+  /// Cmd+W: close the active conversation. Falls back to the system close
+  /// behavior (window close) when nothing is selected.
+  private func closeCurrentConversation() {
+    guard let id = store.conversations.selectedConversationID else {
+      NSApp.keyWindow?.performClose(nil)
+      return
+    }
+    store.send(.conversations(.deleteConversation(id)))
   }
 
   private var knownWorktreeCards: [WorkspaceCardModel] {
