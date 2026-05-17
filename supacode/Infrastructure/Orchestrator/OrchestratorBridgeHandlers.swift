@@ -45,15 +45,27 @@ enum OrchestratorBridgeHandlers {
       guard !repoPath.isEmpty, !branch.isEmpty else {
         return ["error": "repo_path and branch_name are required"]
       }
-      guard
-        let repo = matchRepository(in: store, path: repoPath)
-      else {
-        let known = store.state.repositories.repositories
-          .map { $0.rootURL.path(percentEncoded: false) }
-        return [
-          "error": "Repository not found at \(repoPath)",
-          "known_repos": known,
-        ]
+      let repo: Repository
+      if let existing = matchRepository(in: store, path: repoPath) {
+        repo = existing
+      } else {
+        // Repo isn't in Supacode's sidebar yet — auto-register it so the
+        // user doesn't have to do a manual "Add Repository" step. The
+        // agent has access to all of ~, so any reachable git repo is
+        // fair game.
+        let url = resolveRepoURL(repoPath)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+          return ["error": "Path does not exist: \(url.path(percentEncoded: false))"]
+        }
+        guard Repository.isGitRepository(at: url) else {
+          return ["error": "\(url.path(percentEncoded: false)) is not a git repository"]
+        }
+        logger.info("Auto-registering repo at \(url.path(percentEncoded: false)) for orchestrator")
+        store.send(.repositories(.openRepositories([url])))
+        guard let registered = await awaitRepository(store: store, url: url) else {
+          return ["error": "Repo registration timed out for \(url.path(percentEncoded: false))"]
+        }
+        repo = registered
       }
       logger.info("create_workspace repo=\(repo.name) branch=\(branch)")
       store.send(
@@ -156,14 +168,41 @@ enum OrchestratorBridgeHandlers {
   /// Match the requested repo path against state. Accepts exact path,
   /// expanded tilde paths, and basename matches as a last resort.
   private static func matchRepository(in store: StoreOf<AppFeature>, path: String) -> Repository? {
-    let expanded = (path as NSString).expandingTildeInPath
-    let normalized = URL(fileURLWithPath: expanded).standardizedFileURL.path(percentEncoded: false)
+    let normalized = resolveRepoURL(path).standardizedFileURL.path(percentEncoded: false)
     let repos = store.state.repositories.repositories
     if let exact = repos.first(where: { $0.rootURL.standardizedFileURL.path(percentEncoded: false) == normalized }) {
       return exact
     }
     if let byName = repos.first(where: { $0.name.caseInsensitiveCompare(URL(fileURLWithPath: normalized).lastPathComponent) == .orderedSame }) {
       return byName
+    }
+    return nil
+  }
+
+  /// Resolve `~`, relative paths, and bare names. A bare basename (e.g.
+  /// "chexyCore") expands to ~/chexyCore.
+  private static func resolveRepoURL(_ path: String) -> URL {
+    let expanded = (path as NSString).expandingTildeInPath
+    if expanded.hasPrefix("/") {
+      return URL(fileURLWithPath: expanded).standardizedFileURL
+    }
+    return URL(fileURLWithPath: NSHomeDirectory()).appending(path: expanded).standardizedFileURL
+  }
+
+  /// Poll for a freshly-registered repo to appear in state.
+  private static func awaitRepository(
+    store: StoreOf<AppFeature>,
+    url: URL
+  ) async -> Repository? {
+    let target = url.standardizedFileURL.path(percentEncoded: false)
+    let deadline = Date().addingTimeInterval(20)
+    while Date() < deadline {
+      if let repo = store.state.repositories.repositories.first(where: {
+        $0.rootURL.standardizedFileURL.path(percentEncoded: false) == target
+      }) {
+        return repo
+      }
+      try? await Task.sleep(for: .milliseconds(200))
     }
     return nil
   }
