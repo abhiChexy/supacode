@@ -39,7 +39,17 @@ struct OrchestratorChatView: View {
     .background(Theme.Color.backgroundSecondary)
     .foregroundStyle(Theme.Color.textPrimary)
     .sheet(isPresented: $isInspectorPresented) {
-      SessionInspectorView(conversationID: conversation.id)
+      SessionInspectorView(
+        conversationID: conversation.id,
+        conversationTitle: conversation.title,
+        model: runtime.model,
+        cwd: runtime.cwd,
+        sessionID: conversation.orchestratorSessionID,
+        usageInputTokens: runtime.totalInputTokens,
+        usageOutputTokens: runtime.totalOutputTokens,
+        usageCacheReadTokens: runtime.totalCacheReadTokens,
+        usageCostUSD: runtime.totalCostUSD
+      )
     }
   }
 
