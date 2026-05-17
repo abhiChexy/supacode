@@ -8,6 +8,7 @@ struct OrchestratorChatView: View {
   @Bindable var store: StoreOf<ConversationFeature>
   let conversation: Conversation
   @State private var draft: String = ""
+  @State private var composerHeight: CGFloat = 22
   @State private var isUserScrolledAway = false
   @State private var isInspectorPresented = false
   @State private var bottomAnchorY: CGFloat?
@@ -291,11 +292,16 @@ struct OrchestratorChatView: View {
         .padding(.horizontal, Theme.Spacing.m)
         .padding(.top, Theme.Spacing.s)
       }
-      ComposerTextEditor(text: $draft, onCommit: send)
-        .frame(minHeight: 40, maxHeight: 200)
-        .padding(.horizontal, Theme.Spacing.m)
-        .padding(.top, Theme.Spacing.m)
-        .padding(.bottom, Theme.Spacing.s)
+      ComposerTextEditor(
+        text: $draft,
+        measuredHeight: $composerHeight,
+        maxHeight: 200,
+        onCommit: send
+      )
+      .frame(height: composerHeight)
+      .padding(.horizontal, Theme.Spacing.m)
+      .padding(.top, Theme.Spacing.s)
+      .padding(.bottom, Theme.Spacing.xs)
       composerToolbar
     }
     .background(Theme.Color.backgroundElevated)
