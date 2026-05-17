@@ -2,12 +2,14 @@ import Combine
 import ComposableArchitecture
 import SupacodeSettingsShared
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Center-pane chat with the orchestrator agent.
 struct OrchestratorChatView: View {
   @Bindable var store: StoreOf<ConversationFeature>
   let conversation: Conversation
   @State private var draft: String = ""
+  @State private var attachments: [URL] = []
   @State private var composerHeight: CGFloat = 22
   @State private var isUserScrolledAway = false
   @State private var isInspectorPresented = false
@@ -292,6 +294,16 @@ struct OrchestratorChatView: View {
         .padding(.horizontal, Theme.Spacing.m)
         .padding(.top, Theme.Spacing.s)
       }
+      if !attachments.isEmpty {
+        AttachmentStrip(
+          attachments: attachments,
+          onRemove: { url in
+            attachments.removeAll { $0 == url }
+          }
+        )
+        .padding(.horizontal, Theme.Spacing.m)
+        .padding(.top, Theme.Spacing.s)
+      }
       ComposerTextEditor(
         text: $draft,
         measuredHeight: $composerHeight,
@@ -308,6 +320,28 @@ struct OrchestratorChatView: View {
     .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.input))
     .overlay(RoundedRectangle(cornerRadius: Theme.Radius.input).stroke(Theme.Color.borderSubtle, lineWidth: 1))
     .padding(Theme.Spacing.m)
+    .onDrop(of: [.fileURL], isTargeted: nil, perform: handleDrop)
+  }
+
+  private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+    var accepted = false
+    for provider in providers where provider.hasItemConformingToTypeIdentifier("public.file-url") {
+      provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { item, _ in
+        if let data = item as? Data,
+          let url = URL(dataRepresentation: data, relativeTo: nil)
+        {
+          DispatchQueue.main.async {
+            if !attachments.contains(url) { attachments.append(url) }
+          }
+        } else if let url = item as? URL {
+          DispatchQueue.main.async {
+            if !attachments.contains(url) { attachments.append(url) }
+          }
+        }
+      }
+      accepted = true
+    }
+    return accepted
   }
 
   private var slashQuery: String {
@@ -420,13 +454,19 @@ struct OrchestratorChatView: View {
   }
 
   private var canSend: Bool {
-    !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isInFlight
+    let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    return (hasText || !attachments.isEmpty) && !isInFlight
   }
 
   private func send() {
     guard canSend else { return }
-    let content = draft
+    var content = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !attachments.isEmpty {
+      let prefix = attachments.map { "@\($0.path(percentEncoded: false))" }.joined(separator: " ")
+      content = content.isEmpty ? prefix : "\(prefix)\n\n\(content)"
+    }
     draft = ""
+    attachments = []
     store.send(.sendUserMessage(conversationID: conversation.id, content: content))
   }
 
@@ -437,16 +477,88 @@ struct OrchestratorChatView: View {
     panel.allowsMultipleSelection = true
     panel.directoryURL = URL(fileURLWithPath: runtime.cwd ?? NSHomeDirectory())
     if panel.runModal() == .OK {
-      let paths = panel.urls.map { $0.path(percentEncoded: false) }
-      let snippet = paths.map { "@\($0)" }.joined(separator: " ")
-      if draft.isEmpty {
-        draft = snippet + " "
-      } else if draft.hasSuffix(" ") {
-        draft += snippet + " "
-      } else {
-        draft += " " + snippet + " "
+      for url in panel.urls where !attachments.contains(url) {
+        attachments.append(url)
       }
     }
+  }
+}
+
+/// Conductor / Claude Desktop style attachment thumbnails above the input.
+/// Images render as image previews; other files render as a generic file
+/// chip with the system file icon.
+private struct AttachmentStrip: View {
+  let attachments: [URL]
+  let onRemove: (URL) -> Void
+
+  var body: some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(spacing: Theme.Spacing.s) {
+        ForEach(attachments, id: \.self) { url in
+          AttachmentChip(url: url, onRemove: { onRemove(url) })
+        }
+      }
+      .padding(.vertical, 2)
+    }
+  }
+}
+
+private struct AttachmentChip: View {
+  let url: URL
+  let onRemove: () -> Void
+  @State private var hovering = false
+
+  private var isImage: Bool {
+    let imageExts: Set<String> = ["png", "jpg", "jpeg", "gif", "heic", "heif", "webp", "tiff", "bmp"]
+    return imageExts.contains(url.pathExtension.lowercased())
+  }
+
+  var body: some View {
+    ZStack(alignment: .topTrailing) {
+      Group {
+        if isImage, let nsImage = NSImage(contentsOf: url) {
+          Image(nsImage: nsImage)
+            .resizable()
+            .aspectRatio(contentMode: .fill)
+            .frame(width: 72, height: 72)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        } else {
+          VStack(spacing: 4) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+              .resizable()
+              .frame(width: 28, height: 28)
+            Text(url.lastPathComponent)
+              .font(Theme.Font.monoTiny)
+              .foregroundStyle(Theme.Color.textSecondary)
+              .lineLimit(2)
+              .truncationMode(.middle)
+              .multilineTextAlignment(.center)
+          }
+          .frame(width: 88, height: 72)
+          .padding(.horizontal, 4)
+          .background(Theme.Color.backgroundPrimary.opacity(0.6))
+          .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        }
+      }
+      .overlay(
+        RoundedRectangle(cornerRadius: Theme.Radius.card)
+          .stroke(Theme.Color.borderSubtle, lineWidth: 1)
+      )
+      if hovering {
+        Button(action: onRemove) {
+          Image(systemName: "xmark")
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: 16, height: 16)
+            .background(Color.black.opacity(0.75))
+            .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .padding(4)
+      }
+    }
+    .help(url.path(percentEncoded: false))
+    .onHover { hovering = $0 }
   }
 }
 
