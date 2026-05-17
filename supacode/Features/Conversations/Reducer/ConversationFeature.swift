@@ -10,6 +10,9 @@ struct ConversationFeature {
     var conversations: IdentifiedArrayOf<Conversation> = []
     var selectedConversationID: UUID?
     var isLoaded: Bool = false
+    /// Conversations with an in-flight turn — used to drive the thinking
+    /// indicator. Cleared on turn_complete or error.
+    var inFlightConversationIDs: Set<UUID> = []
   }
 
   enum Action: Equatable {
@@ -105,6 +108,7 @@ struct ConversationFeature {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .none }
         let message = OrchestratorMessage(id: uuid(), role: .user, content: trimmed, timestamp: date.now)
+        state.inFlightConversationIDs.insert(conversationID)
         return .merge(
           .send(.appendMessage(conversationID: conversationID, message: message)),
           .run { _ in
@@ -198,8 +202,9 @@ struct ConversationFeature {
       return .send(.appendMessage(conversationID: conversationID, message: message))
 
     case .turnComplete(let conversationID, let sessionID):
-      guard let sessionID, var conversation = state.conversations[id: conversationID] else { return .none }
-      if conversation.orchestratorSessionID != sessionID {
+      state.inFlightConversationIDs.remove(conversationID)
+      guard var conversation = state.conversations[id: conversationID] else { return .none }
+      if let sessionID, conversation.orchestratorSessionID != sessionID {
         conversation.orchestratorSessionID = sessionID
         state.conversations[id: conversationID] = conversation
         return persist(conversation)
@@ -208,6 +213,7 @@ struct ConversationFeature {
 
     case .error(let conversationID, let message):
       guard let conversationID else { return .none }
+      state.inFlightConversationIDs.remove(conversationID)
       let msg = OrchestratorMessage(id: uuid(), role: .system, content: "[error] \(message)", timestamp: date.now)
       return .send(.appendMessage(conversationID: conversationID, message: msg))
     }
