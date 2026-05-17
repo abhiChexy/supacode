@@ -70,7 +70,12 @@ class OrchestratorSession:
         options = ClaudeAgentOptions(
             system_prompt=self._system_prompt,
             resume=self._resume_session_id,
-            permission_mode="acceptEdits",
+            # bypassPermissions = the SDK equivalent of
+            # `claude --dangerously-skip-permissions`. The user explicitly
+            # runs their personal Claude this way — the orchestrator
+            # should match so MCP tool calls, edits, and bash all run
+            # without an approval prompt the user has no UI to answer.
+            permission_mode="bypassPermissions",
             cwd=os.path.expanduser("~"),
             # Load the user's ~/.claude settings so MCP servers (Datadog,
             # Linear, chexy, etc.) and configured agents are available.
