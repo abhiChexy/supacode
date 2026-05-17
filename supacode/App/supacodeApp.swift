@@ -409,6 +409,7 @@ struct SupacodeApp: App {
       .openSettingsOnSelection(store: store)
       .openDeeplinkReferenceOnRequest(store: store)
     }
+    .windowStyle(.hiddenTitleBar)
     .handlesExternalEvents(matching: [])
     .environment(ghosttyShortcuts)
     .environment(commandKeyObserver)
