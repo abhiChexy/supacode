@@ -127,11 +127,13 @@ struct ContentView: View {
           store: store.scope(state: \.conversations, action: \.conversations),
           conversation: conversation
         )
+        .id(conversation.id)
         Divider().background(Theme.Color.borderSubtle)
         ConversationRightPaneView(
           conversation: conversation,
           knownWorktrees: knownWorktreeCards
         )
+        .id(conversation.id)
         .frame(minWidth: 240, idealWidth: 320, maxWidth: 420)
       }
     } else if store.repositories.selectedWorktreeID != nil {
