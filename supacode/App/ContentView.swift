@@ -150,9 +150,6 @@ struct ContentView: View {
               .scrollContentBackground(.hidden)
               .background(Theme.Color.backgroundPrimary)
               .frame(maxWidth: .infinity, maxHeight: .infinity)
-            ConversationTotalsCard(
-              store: store.scope(state: \.conversations, action: \.conversations)
-            )
             SidebarBottomCardView(store: store)
           }
         }
