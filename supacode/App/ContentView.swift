@@ -16,8 +16,17 @@ struct ContentView: View {
   let terminalManager: WorktreeTerminalManager
   @Environment(\.scenePhase) private var scenePhase
   @Environment(GhosttyShortcutManager.self) private var ghosttyShortcuts
-  @State private var leftSidebarVisibility: NavigationSplitViewVisibility = .all
+  @State private var sidebarMode: SidebarMode = .expanded
+  @State private var sidebarWidth: CGFloat = 260
   @State private var isSearchPresented: Bool = false
+
+  private enum SidebarMode { case expanded, collapsed }
+  private var effectiveSidebarWidth: CGFloat {
+    switch sidebarMode {
+    case .expanded: return sidebarWidth
+    case .collapsed: return 44
+    }
+  }
 
   init(store: StoreOf<AppFeature>, terminalManager: WorktreeTerminalManager) {
     self.store = store
@@ -26,35 +35,15 @@ struct ContentView: View {
   }
 
   var body: some View {
-    NavigationSplitView(columnVisibility: $leftSidebarVisibility) {
-      VStack(spacing: 0) {
-        ConversationsSidebarSectionView(
-          store: store.scope(state: \.conversations, action: \.conversations)
-        )
-        SidebarView(store: repositoriesStore, terminalManager: terminalManager)
-      }
-      .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
-      .safeAreaInset(edge: .bottom, spacing: 0) {
-        VStack(spacing: 0) {
-          ConversationTotalsCard(
-            store: store.scope(state: \.conversations, action: \.conversations)
-          )
-          SidebarBottomCardView(store: store)
-        }
-      }
-    } detail: {
-      HStack(spacing: 0) {
-        if leftSidebarVisibility == .detailOnly {
-          ConversationsSidebarRail(
-            store: store.scope(state: \.conversations, action: \.conversations),
-            onExpand: { withAnimation(.easeOut(duration: 0.2)) { leftSidebarVisibility = .all } }
-          )
-          .transition(.move(edge: .leading).combined(with: .opacity))
-        }
-        detailPane
-      }
+    HStack(spacing: 0) {
+      sidebar
+        .frame(width: effectiveSidebarWidth)
+      Divider()
+        .background(Theme.Color.borderSubtle)
+      detailPane
     }
-    .navigationSplitViewStyle(.automatic)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Theme.Color.backgroundSecondary)
     .disabled(!store.repositories.isInitialLoadComplete)
     .onChange(of: scenePhase) { _, newValue in
       store.send(.scenePhaseChanged(newValue))
@@ -138,6 +127,29 @@ struct ContentView: View {
   }
 
   @ViewBuilder
+  private var sidebar: some View {
+    switch sidebarMode {
+    case .collapsed:
+      ConversationsSidebarRail(
+        store: store.scope(state: \.conversations, action: \.conversations),
+        onExpand: toggleLeftSidebar
+      )
+    case .expanded:
+      VStack(spacing: 0) {
+        ConversationsSidebarSectionView(
+          store: store.scope(state: \.conversations, action: \.conversations)
+        )
+        SidebarView(store: repositoriesStore, terminalManager: terminalManager)
+        ConversationTotalsCard(
+          store: store.scope(state: \.conversations, action: \.conversations)
+        )
+        SidebarBottomCardView(store: store)
+      }
+      .background(Theme.Color.backgroundPrimary)
+    }
+  }
+
+  @ViewBuilder
   private var detailPane: some View {
     if let id = store.conversations.selectedConversationID,
       let conversation = store.conversations.conversations[id: id]
@@ -189,8 +201,8 @@ struct ContentView: View {
   }
 
   private func toggleLeftSidebar() {
-    withAnimation(.easeOut(duration: 0.2)) {
-      leftSidebarVisibility = leftSidebarVisibility == .detailOnly ? .all : .detailOnly
+    withAnimation(.easeOut(duration: 0.18)) {
+      sidebarMode = sidebarMode == .expanded ? .collapsed : .expanded
     }
   }
 
@@ -200,8 +212,8 @@ struct ContentView: View {
   }
 
   private func revealInSidebar() {
-    withAnimation(.easeOut(duration: 0.2)) {
-      leftSidebarVisibility = .all
+    withAnimation(.easeOut(duration: 0.18)) {
+      sidebarMode = .expanded
     }
     store.send(.repositories(.revealSelectedWorktreeInSidebar))
   }
