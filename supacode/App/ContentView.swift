@@ -44,6 +44,7 @@ struct ContentView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Theme.Color.backgroundSecondary.ignoresSafeArea())
+    .containerBackground(Theme.Color.backgroundSecondary, for: .window)
     .disabled(!store.repositories.isInitialLoadComplete)
     .onChange(of: scenePhase) { _, newValue in
       store.send(.scenePhaseChanged(newValue))
@@ -136,16 +137,24 @@ struct ContentView: View {
           onExpand: toggleLeftSidebar
         )
       case .expanded:
-        VStack(spacing: 0) {
-          ConversationsSidebarSectionView(
-            store: store.scope(state: \.conversations, action: \.conversations)
-          )
-          SidebarView(store: repositoriesStore, terminalManager: terminalManager)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-          ConversationTotalsCard(
-            store: store.scope(state: \.conversations, action: \.conversations)
-          )
-          SidebarBottomCardView(store: store)
+        ZStack {
+          // Opaque base so the macOS NSVisualEffectView that wraps
+          // List(.sidebar) doesn't bleed wallpaper into the empty
+          // middle region.
+          Theme.Color.backgroundPrimary.ignoresSafeArea()
+          VStack(spacing: 0) {
+            ConversationsSidebarSectionView(
+              store: store.scope(state: \.conversations, action: \.conversations)
+            )
+            SidebarView(store: repositoriesStore, terminalManager: terminalManager)
+              .scrollContentBackground(.hidden)
+              .background(Theme.Color.backgroundPrimary)
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ConversationTotalsCard(
+              store: store.scope(state: \.conversations, action: \.conversations)
+            )
+            SidebarBottomCardView(store: store)
+          }
         }
       }
     }
