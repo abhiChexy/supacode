@@ -111,6 +111,8 @@ struct ContentView: View {
           .keyboardShortcut("f", modifiers: .command)
         Button("") { closeCurrentConversation() }
           .keyboardShortcut("w", modifiers: .command)
+        Button("") { toggleLeftSidebar() }
+          .keyboardShortcut("b", modifiers: .command)
       }
       .hidden()
     )
