@@ -3,7 +3,6 @@ import ComposableArchitecture
 import Foundation
 import IdentifiedCollections
 import OrderedCollections
-import PostHog
 import SupacodeSettingsShared
 import SwiftUI
 

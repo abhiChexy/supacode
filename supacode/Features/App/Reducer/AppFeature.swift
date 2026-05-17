@@ -1,7 +1,6 @@
 import AppKit
 import ComposableArchitecture
 import Foundation
-import PostHog
 import SupacodeSettingsFeature
 import SupacodeSettingsShared
 import SwiftUI

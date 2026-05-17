@@ -1,5 +1,4 @@
 import ComposableArchitecture
-import PostHog
 import SwiftUI
 
 public nonisolated struct AnalyticsClient: Sendable {
@@ -16,21 +15,10 @@ public nonisolated struct AnalyticsClient: Sendable {
 }
 
 extension AnalyticsClient: DependencyKey {
+  /// No-op live value in this personal fork. See docs/DECISIONS.md.
   public static let liveValue = AnalyticsClient(
-    capture: { event, properties in
-      #if !DEBUG
-        @Shared(.settingsFile) var settingsFile
-        guard settingsFile.global.analyticsEnabled else { return }
-        PostHogSDK.shared.capture(event, properties: properties)
-      #endif
-    },
-    identify: { distinctId in
-      #if !DEBUG
-        @Shared(.settingsFile) var settingsFile
-        guard settingsFile.global.analyticsEnabled else { return }
-        PostHogSDK.shared.identify(distinctId)
-      #endif
-    }
+    capture: { _, _ in },
+    identify: { _ in }
   )
 
   public static let testValue = AnalyticsClient(

@@ -57,12 +57,6 @@
 	<string>A program running within Supacode requires elevated privileges.</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
-	<key>PostHogAPIKey</key>
-	<string>$(POSTHOG_API_KEY)</string>
-	<key>PostHogHost</key>
-	<string>$(POSTHOG_HOST)</string>
-	<key>SentryDSN</key>
-	<string>$(SENTRY_DSN)</string>
 	<key>SUFeedURL</key>
     <string>https://supacode.sh/download/latest/appcast.xml</string>
 	<key>SUPublicEDKey</key>

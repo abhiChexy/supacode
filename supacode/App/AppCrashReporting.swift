@@ -1,7 +1,8 @@
 import Foundation
-import Sentry
 import SupacodeSettingsShared
 
+/// No-op in this personal fork. Type + Configuration are preserved so call
+/// sites and existing tests compile unchanged. See docs/DECISIONS.md.
 enum AppCrashReporting {
   struct Configuration: Equatable {
     let dsn: String
@@ -26,16 +27,6 @@ enum AppCrashReporting {
 
   @MainActor
   static func setup(settings: GlobalSettings, infoDictionary: [String: Any]) {
-    #if DEBUG
-      return
-    #else
-      guard isEnabled(settings: settings, isDebugBuild: false) else { return }
-      guard let configuration = Configuration(infoDictionary: infoDictionary) else { return }
-      SentrySDK.start { options in
-        options.dsn = configuration.dsn
-        options.tracesSampleRate = 1.0
-        options.enableAppHangTracking = false
-      }
-    #endif
+    // intentionally empty
   }
 }

@@ -1,7 +1,8 @@
 import Foundation
-import PostHog
 import SupacodeSettingsShared
 
+/// No-op in this personal fork. Type + Configuration are preserved so call
+/// sites and existing tests compile unchanged. See docs/DECISIONS.md.
 enum AppTelemetry {
   struct Configuration: Equatable {
     let apiKey: String
@@ -36,17 +37,6 @@ enum AppTelemetry {
     infoDictionary: [String: Any],
     hardwareUUID: String? = HardwareInfo.uuid
   ) {
-    #if DEBUG
-      return
-    #else
-      guard isEnabled(settings: settings, isDebugBuild: false) else { return }
-      guard let configuration = Configuration(infoDictionary: infoDictionary) else { return }
-      let config = PostHogConfig(apiKey: configuration.apiKey, host: configuration.host)
-      config.enableSwizzling = false
-      PostHogSDK.shared.setup(config)
-      if let hardwareUUID {
-        PostHogSDK.shared.identify(hardwareUUID)
-      }
-    #endif
+    // intentionally empty
   }
 }
