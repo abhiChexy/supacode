@@ -26,13 +26,18 @@ struct ContentView: View {
 
   var body: some View {
     NavigationSplitView(columnVisibility: $leftSidebarVisibility) {
-      SidebarView(store: repositoriesStore, terminalManager: terminalManager)
-        .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-          SidebarBottomCardView(store: store)
-        }
+      VStack(spacing: 0) {
+        ConversationsSidebarSectionView(
+          store: store.scope(state: \.conversations, action: \.conversations)
+        )
+        SidebarView(store: repositoriesStore, terminalManager: terminalManager)
+      }
+      .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
+      .safeAreaInset(edge: .bottom, spacing: 0) {
+        SidebarBottomCardView(store: store)
+      }
     } detail: {
-      WorktreeDetailView(store: store, terminalManager: terminalManager)
+      detailPane
     }
     .navigationSplitViewStyle(.automatic)
     .disabled(!store.repositories.isInitialLoadComplete)
@@ -99,6 +104,17 @@ struct ContentView: View {
         terminalManager: terminalManager
       )
     )
+  }
+
+  @ViewBuilder
+  private var detailPane: some View {
+    if let id = store.conversations.selectedConversationID,
+      let conversation = store.conversations.conversations[id: id]
+    {
+      OrchestratorChatPlaceholderView(conversation: conversation)
+    } else {
+      WorktreeDetailView(store: store, terminalManager: terminalManager)
+    }
   }
 
   private func toggleLeftSidebar() {
