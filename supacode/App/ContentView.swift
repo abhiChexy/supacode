@@ -252,13 +252,25 @@ struct ContentView: View {
   }
 
   private var knownWorktreeCards: [WorkspaceCardModel] {
-    store.repositories.repositories.flatMap { repo in
-      repo.worktrees.map { wt in
-        WorkspaceCardModel(
+    let items = store.repositories.sidebarItems
+    return store.repositories.repositories.flatMap { repo in
+      repo.worktrees.map { wt -> WorkspaceCardModel in
+        let item = items[id: wt.id]
+        let status: WorkspaceCardModel.Status = {
+          guard let item else { return .idle }
+          if item.hasAgentAwaitingInput { return .waitingForInput }
+          if item.isTaskRunning || !item.runningScripts.isEmpty { return .running }
+          if item.hasUnseenNotifications { return .notifying }
+          return .idle
+        }()
+        return WorkspaceCardModel(
           id: wt.id,
           repoName: repo.name,
           branch: wt.name,
-          path: wt.workingDirectory.path(percentEncoded: false)
+          path: wt.workingDirectory.path(percentEncoded: false),
+          status: status,
+          addedLines: item?.addedLines,
+          removedLines: item?.removedLines
         )
       }
     }

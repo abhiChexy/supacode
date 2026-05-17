@@ -90,6 +90,29 @@ struct WorkspaceCardModel: Equatable, Identifiable {
   let repoName: String
   let branch: String
   let path: String
+  var status: Status = .idle
+  var addedLines: Int?
+  var removedLines: Int?
+
+  enum Status: Equatable {
+    case idle, running, waitingForInput, notifying
+    var label: String {
+      switch self {
+      case .idle: return "idle"
+      case .running: return "running"
+      case .waitingForInput: return "waiting for input"
+      case .notifying: return "notification"
+      }
+    }
+    var color: Color {
+      switch self {
+      case .idle: return Theme.Color.textTertiary
+      case .running: return Theme.Color.statusSuccess
+      case .waitingForInput: return Theme.Color.statusWarning
+      case .notifying: return Theme.Color.accent
+      }
+    }
+  }
 }
 
 private struct WorkspaceCard: View {
@@ -108,10 +131,21 @@ private struct WorkspaceCard: View {
           .lineLimit(1)
           .truncationMode(.middle)
         Spacer()
+        statusPill
       }
-      Text(card.repoName)
-        .font(Theme.Font.metadata)
-        .foregroundStyle(Theme.Color.textTertiary)
+      HStack(spacing: Theme.Spacing.s) {
+        Text(card.repoName)
+          .font(Theme.Font.metadata)
+          .foregroundStyle(Theme.Color.textTertiary)
+        if let added = card.addedLines, let removed = card.removedLines, added + removed > 0 {
+          Text("+\(added)")
+            .font(Theme.Font.monoTiny)
+            .foregroundStyle(Theme.Color.statusSuccess)
+          Text("-\(removed)")
+            .font(Theme.Font.monoTiny)
+            .foregroundStyle(Theme.Color.statusError)
+        }
+      }
       Text(card.path)
         .font(Theme.Font.monoTiny)
         .foregroundStyle(Theme.Color.textTertiary)
@@ -152,6 +186,31 @@ private struct WorkspaceCard: View {
     .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
     .themeBorder()
     .onHover { hovering = $0 }
+  }
+
+  @State private var pulse = false
+
+  private var statusPill: some View {
+    HStack(spacing: 4) {
+      Circle()
+        .fill(card.status.color)
+        .frame(width: 6, height: 6)
+        .opacity(card.status == .running && pulse ? 0.4 : 1.0)
+        .onAppear {
+          if card.status == .running {
+            withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
+              pulse.toggle()
+            }
+          }
+        }
+      Text(card.status.label)
+        .font(Theme.Font.monoTiny)
+        .foregroundStyle(card.status.color)
+    }
+    .padding(.horizontal, 6)
+    .padding(.vertical, 2)
+    .background(card.status.color.opacity(0.12))
+    .clipShape(Capsule())
   }
 
   private func actionLabel(_ text: String, icon: String) -> some View {
