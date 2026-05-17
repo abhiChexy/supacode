@@ -66,6 +66,7 @@ struct ConversationFeature {
     case assignWorkspace(workspaceID: String, conversationID: UUID)
     case unassignWorkspace(workspaceID: String, conversationID: UUID)
     case renameConversation(id: UUID, title: String)
+    case togglePinned(id: UUID)
     case appendMessage(conversationID: UUID, message: OrchestratorMessage)
     case sendUserMessage(conversationID: UUID, content: String)
     case orchestratorEvent(OrchestratorEvent)
@@ -226,6 +227,12 @@ struct ConversationFeature {
       case .renameConversation(let id, let title):
         guard var conversation = state.conversations[id: id] else { return .none }
         conversation.title = title
+        state.conversations[id: id] = conversation
+        return persist(conversation)
+
+      case .togglePinned(let id):
+        guard var conversation = state.conversations[id: id] else { return .none }
+        conversation.isPinned.toggle()
         state.conversations[id: id] = conversation
         return persist(conversation)
 

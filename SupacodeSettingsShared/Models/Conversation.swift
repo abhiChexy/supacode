@@ -13,6 +13,7 @@ public nonisolated struct Conversation: Identifiable, Codable, Equatable, Sendab
   /// The `claude-agent-sdk` session id, captured after the first turn. Used
   /// to resume the session across app restarts. `nil` until first turn.
   public var orchestratorSessionID: String?
+  public var isPinned: Bool
 
   public init(
     id: UUID = UUID(),
@@ -20,7 +21,8 @@ public nonisolated struct Conversation: Identifiable, Codable, Equatable, Sendab
     createdAt: Date = Date(),
     workspaceIDs: [String] = [],
     orchestratorMessages: [OrchestratorMessage] = [],
-    orchestratorSessionID: String? = nil
+    orchestratorSessionID: String? = nil,
+    isPinned: Bool = false
   ) {
     self.id = id
     self.title = title
@@ -28,6 +30,22 @@ public nonisolated struct Conversation: Identifiable, Codable, Equatable, Sendab
     self.workspaceIDs = workspaceIDs
     self.orchestratorMessages = orchestratorMessages
     self.orchestratorSessionID = orchestratorSessionID
+    self.isPinned = isPinned
+  }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    self.id = try c.decode(UUID.self, forKey: .id)
+    self.title = try c.decode(String.self, forKey: .title)
+    self.createdAt = try c.decode(Date.self, forKey: .createdAt)
+    self.workspaceIDs = try c.decode([String].self, forKey: .workspaceIDs)
+    self.orchestratorMessages = try c.decode([OrchestratorMessage].self, forKey: .orchestratorMessages)
+    self.orchestratorSessionID = try c.decodeIfPresent(String.self, forKey: .orchestratorSessionID)
+    self.isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id, title, createdAt, workspaceIDs, orchestratorMessages, orchestratorSessionID, isPinned
   }
 }
 

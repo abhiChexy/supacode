@@ -42,7 +42,10 @@ struct ConversationsSidebarSectionView: View {
   }
 
   private var orderedConversations: [Conversation] {
-    store.conversations.sorted { $0.createdAt > $1.createdAt }
+    store.conversations.sorted { a, b in
+      if a.isPinned != b.isPinned { return a.isPinned && !b.isPinned }
+      return a.createdAt > b.createdAt
+    }
   }
 
   private var header: some View {
@@ -72,41 +75,75 @@ struct ConversationsSidebarSectionView: View {
     let isInFlight = store.inFlightConversationIDs.contains(conversation.id)
     let isHovered = hoveredID == conversation.id
     HStack(spacing: Theme.Spacing.s) {
-      Circle()
-        .fill(isInFlight ? Theme.Color.statusSuccess : Theme.Color.textTertiary)
-        .frame(width: 6, height: 6)
+      ZStack {
+        if conversation.isPinned {
+          Image(systemName: "pin.fill")
+            .font(.system(size: 8))
+            .rotationEffect(.degrees(45))
+            .foregroundStyle(Theme.Color.accent)
+        } else {
+          Circle()
+            .fill(isInFlight ? Theme.Color.statusSuccess : Theme.Color.textTertiary)
+            .frame(width: 6, height: 6)
+        }
+      }
+      .frame(width: 10, height: 10)
+
       Text(conversation.title.isEmpty ? "Untitled" : conversation.title)
         .font(Theme.Font.sidebarRow)
         .foregroundStyle(Theme.Color.textPrimary)
         .lineLimit(1)
         .truncationMode(.tail)
       Spacer(minLength: Theme.Spacing.xs)
-      if isHovered {
-        Button {
-          store.send(.deleteConversation(conversation.id))
-        } label: {
-          Image(systemName: "trash")
-            .font(.system(size: 10))
-            .foregroundStyle(Theme.Color.textSecondary)
-            .frame(width: 18, height: 18)
-            .background(Theme.Color.backgroundElevated)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-        }
-        .buttonStyle(.plain)
-        .help("Delete conversation")
-      } else {
-        if !conversation.workspaceIDs.isEmpty {
-          Text("\(conversation.workspaceIDs.count)")
+      // Fixed-width trailing slot so hover doesn't reflow the row.
+      ZStack(alignment: .trailing) {
+        // Resting content (time + optional workspace count).
+        HStack(spacing: 4) {
+          if !conversation.workspaceIDs.isEmpty {
+            Text("\(conversation.workspaceIDs.count)")
+              .font(Theme.Font.monoTiny)
+              .foregroundStyle(Theme.Color.textTertiary)
+          }
+          Text(relativeTime(for: conversation.createdAt))
             .font(Theme.Font.monoTiny)
             .foregroundStyle(Theme.Color.textTertiary)
         }
-        Text(relativeTime(for: conversation.createdAt))
-          .font(Theme.Font.monoTiny)
-          .foregroundStyle(Theme.Color.textTertiary)
+        .opacity(isHovered ? 0 : 1)
+        // Hover actions.
+        HStack(spacing: 4) {
+          Button {
+            store.send(.togglePinned(id: conversation.id))
+          } label: {
+            Image(systemName: conversation.isPinned ? "pin.slash" : "pin")
+              .font(.system(size: 10))
+              .foregroundStyle(Theme.Color.textSecondary)
+              .frame(width: 20, height: 20)
+              .background(Theme.Color.backgroundElevated)
+              .clipShape(RoundedRectangle(cornerRadius: 4))
+          }
+          .buttonStyle(.plain)
+          .help(conversation.isPinned ? "Unpin" : "Pin")
+          Button {
+            store.send(.deleteConversation(conversation.id))
+          } label: {
+            Image(systemName: "trash")
+              .font(.system(size: 10))
+              .foregroundStyle(Theme.Color.textSecondary)
+              .frame(width: 20, height: 20)
+              .background(Theme.Color.backgroundElevated)
+              .clipShape(RoundedRectangle(cornerRadius: 4))
+          }
+          .buttonStyle(.plain)
+          .help("Delete conversation")
+        }
+        .opacity(isHovered ? 1 : 0)
+        .allowsHitTesting(isHovered)
       }
+      .frame(height: 20)
     }
+    .frame(height: 24)
     .padding(.horizontal, Theme.Spacing.m)
-    .padding(.vertical, 5)
+    .padding(.vertical, 2)
     .contentShape(Rectangle())
     .background(
       Group {
@@ -127,6 +164,10 @@ struct ConversationsSidebarSectionView: View {
     }
     .help(conversation.title.isEmpty ? "Untitled" : conversation.title)
     .contextMenu {
+      Button(conversation.isPinned ? "Unpin" : "Pin") {
+        store.send(.togglePinned(id: conversation.id))
+      }
+      Divider()
       Button("Delete", role: .destructive) {
         store.send(.deleteConversation(conversation.id))
       }
