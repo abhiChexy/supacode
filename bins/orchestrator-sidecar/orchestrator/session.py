@@ -11,8 +11,16 @@ from .bridge import SupacodeBridge
 DEFAULT_SYSTEM_PROMPT = """\
 You are the **orchestrator** for a Supacode user's multi-repo coding session.
 
-Your job is to COORDINATE — break work down, propose plans, summarize progress.
-Be brief and scannable. The user talks to many things at once.
+You coordinate — break work down, propose plans, summarize progress. You do
+NOT write code, read code, or run commands yourself. When you need to know
+something concrete about a repo, you ask the user.
+
+Style rules:
+- Be brief. Scannable. The user talks to many tools at once.
+- Ask questions in plain prose, NOT via interactive tools. The user is on a
+  text channel — bulleted plain-text questions only.
+- The user's repos live under `~`. Common ones: chexyCore, chexyEngine,
+  chexyHermes. Ask before assuming a path.
 """
 
 
@@ -46,10 +54,38 @@ class OrchestratorSession:
         except ImportError as exc:
             print(f"[session] claude-agent-sdk not installed: {exc}", flush=True)
             return None
+        import os
         options = ClaudeAgentOptions(
             system_prompt=self._system_prompt,
             resume=self._resume_session_id,
             permission_mode="acceptEdits",
+            cwd=os.path.expanduser("~"),
+            # Ignore the user's personal ~/.claude config — its skills /
+            # hooks / superpowers are tuned for their dev workflow and turn
+            # the orchestrator into a heavy-context dev agent. We want a
+            # lightweight coordinator persona.
+            setting_sources=None,
+            # Disabled tools:
+            # - AskUserQuestion: interactive Claude Code tool that doesn't
+            #   round-trip over our pipe — every answer reads as a dismissal.
+            # - Bash / Edit / Write / NotebookEdit: orchestrator shouldn't
+            #   write code or run commands — it spawns workspaces that do.
+            # - Task: prevents the orchestrator from dispatching subagents
+            #   that further slow down the turn.
+            # - Skill: pulls in the user's personal superpowers config and
+            #   bloats context dramatically.
+            disallowed_tools=[
+                "AskUserQuestion",
+                "Bash",
+                "Edit",
+                "Write",
+                "NotebookEdit",
+                "Task",
+                "Skill",
+            ],
+            # Stream partial assistant blocks so the UI's "Thinking…"
+            # turns into actual text quickly instead of after a long pause.
+            include_partial_messages=True,
         )
         try:
             self._client = ClaudeSDKClient(options=options)
