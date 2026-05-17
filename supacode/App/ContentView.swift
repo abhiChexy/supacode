@@ -193,22 +193,17 @@ struct ContentView: View {
         )
       case .expanded:
         ZStack {
-          // Opaque base so the macOS NSVisualEffectView that wraps
-          // List(.sidebar) doesn't bleed wallpaper into the empty
-          // middle region.
           Theme.Color.backgroundPrimary.ignoresSafeArea()
           VStack(spacing: 0) {
             ConversationsSidebarSectionView(
               store: store.scope(state: \.conversations, action: \.conversations)
             )
-            NavigationStack {
-              SidebarView(store: repositoriesStore, terminalManager: terminalManager)
-                .scrollContentBackground(.hidden)
-                .background(Theme.Color.backgroundPrimary)
-                .toolbar(.hidden, for: .automatic)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            SidebarBottomCardView(store: store)
+            // Supacode's legacy repo/worktree sidebar is intentionally
+            // hidden in orchestrator mode — workspaces show in the
+            // conversation's right pane instead. Reinstate by adding
+            // SidebarView(...) back here if you want the full Supacode
+            // experience.
+            Spacer(minLength: 0)
           }
         }
       }
