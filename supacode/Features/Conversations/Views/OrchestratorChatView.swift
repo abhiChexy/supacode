@@ -140,6 +140,7 @@ struct OrchestratorChatView: View {
       ToolCallCard(
         use: use,
         result: result,
+        isTurnInFlight: isInFlight,
         onAnswerQuestion: { answer in
           store.send(.sendUserMessage(conversationID: conversation.id, content: answer))
         }
@@ -295,6 +296,7 @@ private struct ThinkingRow: View {
 private struct ToolCallCard: View {
   let use: OrchestratorMessage
   let result: OrchestratorMessage?
+  let isTurnInFlight: Bool
   let onAnswerQuestion: (String) -> Void
   @State private var expanded = false
 
@@ -339,12 +341,19 @@ private struct ToolCallCard: View {
 
   private var statusIcon: some View {
     Group {
-      if result == nil {
-        ProgressView().scaleEffect(0.5).frame(width: 12, height: 12)
-      } else {
+      if result != nil {
         Image(systemName: "checkmark")
           .font(.system(size: 9, weight: .bold))
           .foregroundStyle(Theme.Color.statusSuccess)
+      } else if isTurnInFlight {
+        ProgressView().scaleEffect(0.5).frame(width: 12, height: 12)
+      } else {
+        // Orphan tool_use from a completed turn whose tool_result was
+        // never persisted (legacy conversations recorded before the
+        // UserMessage / ToolResultBlock fix).
+        Image(systemName: "minus")
+          .font(.system(size: 9, weight: .bold))
+          .foregroundStyle(Theme.Color.textTertiary)
       }
     }
   }
