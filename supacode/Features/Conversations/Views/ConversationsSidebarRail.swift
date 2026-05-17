@@ -13,20 +13,6 @@ struct ConversationsSidebarRail: View {
   var body: some View {
     VStack(spacing: Theme.Spacing.xs) {
       Button {
-        onExpand()
-      } label: {
-        Image(systemName: "sidebar.left")
-          .font(.system(size: 14, weight: .medium))
-          .foregroundStyle(Theme.Color.textSecondary)
-          .frame(width: 32, height: 32)
-          .background(Theme.Color.backgroundElevated)
-          .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.pill))
-      }
-      .buttonStyle(.plain)
-      .help("Expand sidebar (⌃⌘S)")
-      .padding(.top, Theme.Spacing.s)
-
-      Button {
         store.send(.createConversation(title: ""))
         onExpand()
       } label: {
@@ -40,6 +26,7 @@ struct ConversationsSidebarRail: View {
       .buttonStyle(.plain)
       .help("New conversation (⌘N)")
       .keyboardShortcut("n", modifiers: .command)
+      .padding(.top, Theme.Spacing.s)
 
       Divider().background(Theme.Color.borderSubtle).padding(.horizontal, Theme.Spacing.s)
 
