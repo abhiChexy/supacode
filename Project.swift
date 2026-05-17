@@ -43,8 +43,6 @@ let appDependencies: [TargetDependency] = [
   .external(name: "IdentifiedCollections"),
   .external(name: "Kingfisher"),
   .external(name: "OrderedCollections"),
-  .external(name: "PostHog"),
-  .external(name: "Sentry"),
   .external(name: "Sharing"),
   .external(name: "Sparkle"),
 ]
@@ -160,7 +158,6 @@ let project = Project(
       dependencies: [
         .external(name: "ComposableArchitecture"),
         .external(name: "Dependencies"),
-        .external(name: "PostHog"),
         .external(name: "Sharing"),
       ],
       settings: .settings(

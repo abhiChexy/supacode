@@ -1,5 +1,4 @@
 import ComposableArchitecture
-import PostHog
 import SupacodeSettingsShared
 
 @Reducer
