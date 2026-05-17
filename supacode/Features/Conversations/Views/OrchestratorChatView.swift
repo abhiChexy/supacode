@@ -2,165 +2,503 @@ import ComposableArchitecture
 import SupacodeSettingsShared
 import SwiftUI
 
-/// Center-pane chat with the orchestrator agent. Renders the conversation's
-/// message stream and an input bar that dispatches `.sendUserMessage`.
+/// Center-pane chat with the orchestrator agent.
 struct OrchestratorChatView: View {
   @Bindable var store: StoreOf<ConversationFeature>
   let conversation: Conversation
   @State private var draft: String = ""
 
+  private var isInFlight: Bool {
+    store.inFlightConversationIDs.contains(conversation.id)
+  }
+
   var body: some View {
     VStack(spacing: 0) {
       header
-      Divider()
+      Divider().background(Theme.Color.borderSubtle)
       messages
-      Divider()
+      Divider().background(Theme.Color.borderSubtle)
       composer
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(.background)
+    .background(Theme.Color.backgroundSecondary)
+    .foregroundStyle(Theme.Color.textPrimary)
   }
 
+  // MARK: Header
+
   private var header: some View {
-    HStack(spacing: 8) {
+    HStack(spacing: Theme.Spacing.s) {
+      ActivityDot(isActive: isInFlight)
       Text(conversation.title.isEmpty ? "Untitled" : conversation.title)
-        .font(.headline)
+        .font(.system(size: 13, weight: .semibold))
       Spacer()
       if let sessionID = conversation.orchestratorSessionID {
-        Text("session: \(sessionID.prefix(8))…")
-          .font(.system(size: 10, design: .monospaced))
-          .foregroundStyle(.tertiary)
+        Text("session \(sessionID.prefix(8))…")
+          .font(Theme.Font.monoTiny)
+          .foregroundStyle(Theme.Color.textTertiary)
       } else {
         Text("no session")
-          .font(.system(size: 10, design: .monospaced))
-          .foregroundStyle(.tertiary)
+          .font(Theme.Font.monoTiny)
+          .foregroundStyle(Theme.Color.textTertiary)
       }
     }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 10)
+    .padding(.horizontal, Theme.Spacing.l)
+    .padding(.vertical, Theme.Spacing.m)
   }
+
+  // MARK: Messages
 
   private var messages: some View {
     ScrollViewReader { proxy in
       ScrollView {
-        LazyVStack(alignment: .leading, spacing: 16) {
+        LazyVStack(alignment: .leading, spacing: Theme.Spacing.l) {
           if conversation.orchestratorMessages.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-              Text("Tell the orchestrator what you want to coordinate.")
-                .foregroundStyle(.secondary)
-              Text("It will propose a workspace plan before fanning out.")
-                .font(.callout)
-                .foregroundStyle(.tertiary)
-            }
-            .padding(.vertical, 24)
+            emptyState
           }
-          ForEach(conversation.orchestratorMessages) { message in
-            messageRow(message)
-              .id(message.id)
+          ForEach(messageRows) { row in
+            messageRow(row)
+              .id(row.id)
+              .transition(.opacity)
+          }
+          if isInFlight {
+            ThinkingRow()
+              .id("thinking-indicator")
           }
         }
-        .padding(16)
+        .padding(Theme.Spacing.l)
       }
-      .onChange(of: conversation.orchestratorMessages.last?.id) { _, newID in
-        guard let newID else { return }
-        withAnimation(.easeOut(duration: 0.12)) {
-          proxy.scrollTo(newID, anchor: .bottom)
-        }
+      .onChange(of: conversation.orchestratorMessages.last?.id) { _, _ in
+        scrollToBottom(proxy)
+      }
+      .onChange(of: isInFlight) { _, _ in
+        scrollToBottom(proxy)
       }
     }
+  }
+
+  private func scrollToBottom(_ proxy: ScrollViewProxy) {
+    let anchor = isInFlight ? "thinking-indicator" : (conversation.orchestratorMessages.last?.id.uuidString ?? "")
+    guard !anchor.isEmpty else { return }
+    withAnimation(Theme.Motion.messageFade) {
+      proxy.scrollTo(anchor, anchor: .bottom)
+    }
+  }
+
+  private var emptyState: some View {
+    VStack(alignment: .leading, spacing: Theme.Spacing.s) {
+      Text("Tell the orchestrator what you want to coordinate.")
+        .font(Theme.Font.body)
+        .foregroundStyle(Theme.Color.textSecondary)
+      Text("It will propose a workspace plan before fanning out.")
+        .font(Theme.Font.metadata)
+        .foregroundStyle(Theme.Color.textTertiary)
+    }
+    .padding(.vertical, Theme.Spacing.xl)
+  }
+
+  /// Group tool_use + matching tool_result into a single visual row.
+  private var messageRows: [MessageRow] {
+    let messages = conversation.orchestratorMessages
+    var rows: [MessageRow] = []
+    var resultsByID: [String: OrchestratorMessage] = [:]
+    for m in messages where m.role == .toolResult {
+      if let id = JSON.string(m.content, key: "tool_use_id") {
+        resultsByID[id] = m
+      }
+    }
+    for m in messages {
+      switch m.role {
+      case .toolResult:
+        continue
+      case .toolUse:
+        let toolID = JSON.string(m.content, key: "id") ?? ""
+        let result = resultsByID[toolID]
+        rows.append(MessageRow(id: m.id, kind: .toolCall(use: m, result: result)))
+      default:
+        rows.append(MessageRow(id: m.id, kind: .text(m)))
+      }
+    }
+    return rows
   }
 
   @ViewBuilder
-  private func messageRow(_ message: OrchestratorMessage) -> some View {
-    switch message.role {
-    case .user:
-      HStack(alignment: .top) {
-        Spacer(minLength: 60)
-        Text(message.content)
-          .padding(.horizontal, 12)
-          .padding(.vertical, 8)
-          .background(Color.accentColor.opacity(0.15))
-          .clipShape(RoundedRectangle(cornerRadius: 10))
+  private func messageRow(_ row: MessageRow) -> some View {
+    switch row.kind {
+    case .text(let message):
+      switch message.role {
+      case .user:
+        UserBubble(text: message.content)
+      case .assistant:
+        AssistantBubble(text: message.content)
+      case .system:
+        SystemNote(text: message.content)
+      case .toolUse, .toolResult:
+        EmptyView()
       }
-    case .assistant:
-      Text(message.content.isEmpty ? "…" : message.content)
-        .textSelection(.enabled)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    case .toolUse:
-      ToolCallRow(label: toolLabel(for: message), payload: message.content)
-    case .toolResult:
-      ToolCallRow(label: "→ result", payload: message.content)
-    case .system:
-      Text(message.content)
-        .font(.caption)
-        .foregroundStyle(.red)
+    case .toolCall(let use, let result):
+      ToolCallCard(
+        use: use,
+        result: result,
+        onAnswerQuestion: { answer in
+          store.send(.sendUserMessage(conversationID: conversation.id, content: answer))
+        }
+      )
     }
   }
 
-  private func toolLabel(for message: OrchestratorMessage) -> String {
-    guard let data = message.content.data(using: .utf8),
-      let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-      let tool = dict["tool"] as? String
-    else { return "→ tool" }
-    return "→ \(tool)"
-  }
+  // MARK: Composer
 
   private var composer: some View {
-    HStack(alignment: .bottom, spacing: 8) {
+    HStack(alignment: .bottom, spacing: Theme.Spacing.s) {
       TextField("Message orchestrator…", text: $draft, axis: .vertical)
         .lineLimit(1...6)
         .textFieldStyle(.plain)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(.thinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .font(Theme.Font.body)
+        .padding(.horizontal, Theme.Spacing.m)
+        .padding(.vertical, Theme.Spacing.s)
+        .background(Theme.Color.backgroundElevated)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.input))
         .onSubmit(send)
       Button(action: send) {
         Image(systemName: "arrow.up.circle.fill")
           .font(.system(size: 22))
+          .foregroundStyle(canSend ? Theme.Color.accent : Theme.Color.textTertiary)
       }
       .buttonStyle(.plain)
       .keyboardShortcut(.return, modifiers: .command)
-      .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      .disabled(!canSend)
     }
-    .padding(12)
+    .padding(Theme.Spacing.m)
+  }
+
+  private var canSend: Bool {
+    !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isInFlight
   }
 
   private func send() {
+    guard canSend else { return }
     let content = draft
     draft = ""
     store.send(.sendUserMessage(conversationID: conversation.id, content: content))
   }
 }
 
-private struct ToolCallRow: View {
-  let label: String
-  let payload: String
-  @State private var expanded = false
+// MARK: - Row model
+
+private struct MessageRow: Identifiable {
+  let id: UUID
+  let kind: Kind
+
+  enum Kind {
+    case text(OrchestratorMessage)
+    case toolCall(use: OrchestratorMessage, result: OrchestratorMessage?)
+  }
+}
+
+// MARK: - Subviews
+
+private struct ActivityDot: View {
+  let isActive: Bool
+  @State private var pulse = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Button {
-        expanded.toggle()
-      } label: {
-        HStack(spacing: 4) {
-          Image(systemName: expanded ? "chevron.down" : "chevron.right")
-            .font(.system(size: 9))
-          Text(label)
-            .font(.system(size: 11, design: .monospaced))
-            .foregroundStyle(.secondary)
+    Circle()
+      .fill(isActive ? Theme.Color.statusSuccess : Theme.Color.textTertiary)
+      .frame(width: 8, height: 8)
+      .opacity(isActive && pulse ? 0.4 : 1.0)
+      .onAppear { pulse = isActive }
+      .onChange(of: isActive) { _, new in
+        withAnimation(new ? Theme.Motion.pulse : .default) { pulse = new }
+      }
+      .animation(isActive ? Theme.Motion.pulse : .default, value: pulse)
+  }
+}
+
+private struct UserBubble: View {
+  let text: String
+  var body: some View {
+    HStack(alignment: .top) {
+      Spacer(minLength: 60)
+      Text(text)
+        .font(Theme.Font.body)
+        .padding(.horizontal, Theme.Spacing.m)
+        .padding(.vertical, Theme.Spacing.s)
+        .background(Theme.Color.accent.opacity(0.18))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.input))
+        .textSelection(.enabled)
+    }
+  }
+}
+
+private struct AssistantBubble: View {
+  let text: String
+  var body: some View {
+    let attributed = (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+    return Text(attributed)
+      .font(Theme.Font.body)
+      .foregroundStyle(Theme.Color.textPrimary)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .textSelection(.enabled)
+  }
+}
+
+private struct SystemNote: View {
+  let text: String
+  var body: some View {
+    Text(text)
+      .font(Theme.Font.metadata)
+      .foregroundStyle(Theme.Color.statusError)
+      .padding(Theme.Spacing.s)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(Theme.Color.statusError.opacity(0.12))
+      .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.pill))
+  }
+}
+
+private struct ThinkingRow: View {
+  @State private var dots = 0
+
+  var body: some View {
+    HStack(spacing: Theme.Spacing.s) {
+      Circle()
+        .fill(Theme.Color.accent)
+        .frame(width: 6, height: 6)
+        .opacity(0.6)
+        .scaleEffect(scale(for: 0))
+      Circle()
+        .fill(Theme.Color.accent)
+        .frame(width: 6, height: 6)
+        .opacity(0.6)
+        .scaleEffect(scale(for: 1))
+      Circle()
+        .fill(Theme.Color.accent)
+        .frame(width: 6, height: 6)
+        .opacity(0.6)
+        .scaleEffect(scale(for: 2))
+      Text("Thinking…")
+        .font(Theme.Font.metadata)
+        .foregroundStyle(Theme.Color.textSecondary)
+    }
+    .onAppear {
+      Task {
+        while !Task.isCancelled {
+          try? await Task.sleep(for: .milliseconds(400))
+          await MainActor.run { dots = (dots + 1) % 3 }
         }
       }
-      .buttonStyle(.plain)
-      if expanded {
-        Text(payload)
-          .font(.system(size: 11, design: .monospaced))
-          .textSelection(.enabled)
-          .padding(8)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .background(.thinMaterial)
-          .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+  }
+
+  private func scale(for index: Int) -> CGFloat {
+    dots == index ? 1.4 : 1.0
+  }
+}
+
+private struct ToolCallCard: View {
+  let use: OrchestratorMessage
+  let result: OrchestratorMessage?
+  let onAnswerQuestion: (String) -> Void
+  @State private var expanded = false
+
+  private var toolName: String { JSON.string(use.content, key: "tool") ?? "tool" }
+  private var inputJSON: String { JSON.prettyValue(use.content, key: "input") ?? "{}" }
+  private var resultPretty: String? {
+    guard let result else { return nil }
+    return JSON.prettyValue(result.content, key: "result") ?? result.content
+  }
+
+  private var icon: String {
+    switch toolName {
+    case "AskUserQuestion": return "questionmark.circle"
+    case "Skill", "Bash": return "terminal"
+    case "Read", "Glob", "Grep": return "doc.text.magnifyingglass"
+    case "Edit", "Write", "NotebookEdit": return "pencil"
+    case "WebFetch", "WebSearch": return "globe"
+    case let n where n.hasPrefix("create_workspace"): return "folder.badge.plus"
+    case let n where n.hasPrefix("send_to_workspace"): return "paperplane"
+    case let n where n.hasPrefix("peek_workspace"): return "eye"
+    default: return "wrench.and.screwdriver"
+    }
+  }
+
+  private var statusIcon: some View {
+    Group {
+      if result == nil {
+        ProgressView().scaleEffect(0.5).frame(width: 12, height: 12)
+      } else {
+        Image(systemName: "checkmark")
+          .font(.system(size: 9, weight: .bold))
+          .foregroundStyle(Theme.Color.statusSuccess)
       }
     }
+  }
+
+  private var askQuestion: AskQuestionPayload? {
+    guard toolName == "AskUserQuestion" else { return nil }
+    return AskQuestionPayload(rawJSON: inputJSON)
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+      Button {
+        withAnimation(Theme.Motion.toolExpand) { expanded.toggle() }
+      } label: {
+        HStack(spacing: Theme.Spacing.s) {
+          Image(systemName: expanded ? "chevron.down" : "chevron.right")
+            .font(.system(size: 9))
+            .foregroundStyle(Theme.Color.textTertiary)
+            .frame(width: 10)
+          Image(systemName: icon)
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.Color.textSecondary)
+          Text(toolName)
+            .font(Theme.Font.monoSmall)
+            .foregroundStyle(Theme.Color.textSecondary)
+          Spacer()
+          statusIcon
+        }
+        .padding(.horizontal, Theme.Spacing.m)
+        .padding(.vertical, Theme.Spacing.s)
+        .background(Theme.Color.backgroundElevated)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+      }
+      .buttonStyle(.plain)
+
+      if let askQuestion {
+        AskUserQuestionInline(payload: askQuestion, onPick: onAnswerQuestion)
+      }
+
+      if expanded {
+        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+          Text("input")
+            .font(Theme.Font.monoTiny)
+            .foregroundStyle(Theme.Color.textTertiary)
+          Text(inputJSON)
+            .font(Theme.Font.monoSmall)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Spacing.s)
+            .background(Theme.Color.backgroundElevated.opacity(0.6))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.pill))
+          if let resultPretty {
+            Text("result")
+              .font(Theme.Font.monoTiny)
+              .foregroundStyle(Theme.Color.textTertiary)
+            Text(resultPretty)
+              .font(Theme.Font.monoSmall)
+              .textSelection(.enabled)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .padding(Theme.Spacing.s)
+              .background(Theme.Color.backgroundElevated.opacity(0.6))
+              .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.pill))
+          }
+        }
+        .padding(.leading, Theme.Spacing.xl)
+      }
+    }
+  }
+}
+
+private struct AskUserQuestionInline: View {
+  let payload: AskQuestionPayload
+  let onPick: (String) -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Theme.Spacing.s) {
+      ForEach(payload.questions, id: \.question) { q in
+        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+          Text(q.question)
+            .font(Theme.Font.body.weight(.semibold))
+          ForEach(q.options, id: \.label) { opt in
+            Button {
+              onPick("\(q.header): \(opt.label)")
+            } label: {
+              HStack(alignment: .top, spacing: Theme.Spacing.s) {
+                Image(systemName: "circle")
+                  .font(.system(size: 10))
+                  .foregroundStyle(Theme.Color.textTertiary)
+                VStack(alignment: .leading, spacing: 2) {
+                  Text(opt.label)
+                    .font(Theme.Font.body)
+                    .foregroundStyle(Theme.Color.textPrimary)
+                  if !opt.description.isEmpty {
+                    Text(opt.description)
+                      .font(Theme.Font.metadata)
+                      .foregroundStyle(Theme.Color.textSecondary)
+                  }
+                }
+                Spacer()
+              }
+              .padding(.horizontal, Theme.Spacing.m)
+              .padding(.vertical, Theme.Spacing.s)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .background(Theme.Color.backgroundElevated)
+              .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+            }
+            .buttonStyle(.plain)
+          }
+        }
+      }
+    }
+    .padding(.leading, Theme.Spacing.xl)
+    .padding(.top, Theme.Spacing.xs)
+  }
+}
+
+private struct AskQuestionPayload {
+  struct Question {
+    let question: String
+    let header: String
+    let options: [Option]
+  }
+  struct Option {
+    let label: String
+    let description: String
+  }
+  let questions: [Question]
+
+  init?(rawJSON: String) {
+    guard let data = rawJSON.data(using: .utf8),
+      let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+      let qs = dict["questions"] as? [[String: Any]]
+    else { return nil }
+    var parsed: [Question] = []
+    for q in qs {
+      let question = q["question"] as? String ?? ""
+      let header = q["header"] as? String ?? "Choice"
+      let rawOptions = q["options"] as? [[String: Any]] ?? []
+      let opts = rawOptions.map { o in
+        Option(label: o["label"] as? String ?? "", description: o["description"] as? String ?? "")
+      }
+      parsed.append(Question(question: question, header: header, options: opts))
+    }
+    guard !parsed.isEmpty else { return nil }
+    self.questions = parsed
+  }
+}
+
+// MARK: - JSON helpers
+
+private enum JSON {
+  static func string(_ raw: String, key: String) -> String? {
+    guard let data = raw.data(using: .utf8),
+      let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    else { return nil }
+    return dict[key] as? String
+  }
+
+  /// Returns a pretty-printed JSON string of the value stored at `key`, or
+  /// the raw string if it isn't decodable.
+  static func prettyValue(_ raw: String, key: String) -> String? {
+    guard let data = raw.data(using: .utf8),
+      let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    else { return nil }
+    guard let inner = dict[key] else { return nil }
+    if let s = inner as? String { return s }
+    guard let pretty = try? JSONSerialization.data(withJSONObject: inner, options: [.prettyPrinted, .sortedKeys]),
+      let str = String(data: pretty, encoding: .utf8)
+    else { return String(describing: inner) }
+    return str
   }
 }

@@ -2,9 +2,8 @@ import ComposableArchitecture
 import SupacodeSettingsShared
 import SwiftUI
 
-/// Top-of-sidebar list of conversations. Additive surface that sits above the
-/// existing repository sidebar. Picking a conversation deselects any worktree
-/// selection (handled in `AppFeature`).
+/// Top-of-sidebar list of conversations. Additive surface above the existing
+/// repository sidebar.
 struct ConversationsSidebarSectionView: View {
   @Bindable var store: StoreOf<ConversationFeature>
   @State private var newConversationTitle: String = ""
@@ -13,38 +12,45 @@ struct ConversationsSidebarSectionView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       header
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, Theme.Spacing.m)
+        .padding(.vertical, Theme.Spacing.s)
 
       if isAddingConversation {
-        TextField("Title", text: $newConversationTitle)
-          .textFieldStyle(.roundedBorder)
-          .padding(.horizontal, 12)
-          .padding(.bottom, 8)
+        TextField("Conversation title", text: $newConversationTitle)
+          .textFieldStyle(.plain)
+          .font(Theme.Font.sidebarRow)
+          .padding(.horizontal, Theme.Spacing.s)
+          .padding(.vertical, Theme.Spacing.xs)
+          .background(Theme.Color.backgroundElevated)
+          .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.pill))
+          .padding(.horizontal, Theme.Spacing.m)
+          .padding(.bottom, Theme.Spacing.s)
           .onSubmit(commitNewConversation)
       }
 
       if store.conversations.isEmpty {
         Text("No conversations yet")
-          .font(.system(size: 11))
-          .foregroundStyle(.tertiary)
-          .padding(.horizontal, 12)
-          .padding(.bottom, 8)
+          .font(Theme.Font.metadata)
+          .foregroundStyle(Theme.Color.textTertiary)
+          .padding(.horizontal, Theme.Spacing.m)
+          .padding(.bottom, Theme.Spacing.s)
       } else {
         ForEach(store.conversations) { conversation in
           row(for: conversation)
         }
       }
 
-      Divider().padding(.top, 4)
+      Divider()
+        .background(Theme.Color.borderSubtle)
+        .padding(.top, Theme.Spacing.xs)
     }
   }
 
   private var header: some View {
-    HStack(spacing: 4) {
+    HStack(spacing: Theme.Spacing.xs) {
       Text("Conversations")
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(.secondary)
+        .font(Theme.Font.headerSection)
+        .foregroundStyle(Theme.Color.textSecondary)
         .textCase(.uppercase)
       Spacer()
       Button {
@@ -53,6 +59,7 @@ struct ConversationsSidebarSectionView: View {
       } label: {
         Image(systemName: "plus")
           .font(.system(size: 10, weight: .semibold))
+          .foregroundStyle(Theme.Color.textSecondary)
       }
       .buttonStyle(.borderless)
       .help("New Conversation")
@@ -62,24 +69,27 @@ struct ConversationsSidebarSectionView: View {
   @ViewBuilder
   private func row(for conversation: Conversation) -> some View {
     let isSelected = store.selectedConversationID == conversation.id
-    HStack(spacing: 6) {
-      Image(systemName: "bubble.left.and.bubble.right")
-        .font(.system(size: 11))
-        .foregroundStyle(.secondary)
+    let isInFlight = store.inFlightConversationIDs.contains(conversation.id)
+    HStack(spacing: Theme.Spacing.s) {
+      Circle()
+        .fill(isInFlight ? Theme.Color.statusSuccess : Theme.Color.textTertiary)
+        .frame(width: 6, height: 6)
       Text(conversation.title.isEmpty ? "Untitled" : conversation.title)
+        .font(Theme.Font.sidebarRow)
+        .foregroundStyle(Theme.Color.textPrimary)
         .lineLimit(1)
         .truncationMode(.middle)
-      Spacer(minLength: 4)
+      Spacer(minLength: Theme.Spacing.xs)
       if !conversation.workspaceIDs.isEmpty {
         Text("\(conversation.workspaceIDs.count)")
-          .font(.system(size: 10, design: .monospaced))
-          .foregroundStyle(.tertiary)
+          .font(Theme.Font.monoTiny)
+          .foregroundStyle(Theme.Color.textTertiary)
       }
     }
-    .padding(.horizontal, 12)
+    .padding(.horizontal, Theme.Spacing.m)
     .padding(.vertical, 5)
     .contentShape(Rectangle())
-    .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
+    .background(isSelected ? Color.white.opacity(0.08) : Color.clear)
     .onTapGesture {
       store.send(.selectConversation(conversation.id))
     }

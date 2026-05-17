@@ -111,12 +111,33 @@ struct ContentView: View {
     if let id = store.conversations.selectedConversationID,
       let conversation = store.conversations.conversations[id: id]
     {
-      OrchestratorChatView(
-        store: store.scope(state: \.conversations, action: \.conversations),
-        conversation: conversation
-      )
+      HStack(spacing: 0) {
+        OrchestratorChatView(
+          store: store.scope(state: \.conversations, action: \.conversations),
+          conversation: conversation
+        )
+        Divider().background(Theme.Color.borderSubtle)
+        ConversationRightPaneView(
+          conversation: conversation,
+          knownWorktrees: knownWorktreeCards
+        )
+        .frame(minWidth: 240, idealWidth: 320, maxWidth: 420)
+      }
     } else {
       WorktreeDetailView(store: store, terminalManager: terminalManager)
+    }
+  }
+
+  private var knownWorktreeCards: [WorkspaceCardModel] {
+    store.repositories.repositories.flatMap { repo in
+      repo.worktrees.map { wt in
+        WorkspaceCardModel(
+          id: wt.id,
+          repoName: repo.name,
+          branch: wt.name,
+          path: wt.workingDirectory.path(percentEncoded: false)
+        )
+      }
     }
   }
 
