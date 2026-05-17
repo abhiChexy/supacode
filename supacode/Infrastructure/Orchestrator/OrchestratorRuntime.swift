@@ -1,18 +1,17 @@
 import Foundation
 import Network
+import SupacodeSettingsShared
 
 /// Owns the Python sidecar process, the Supacode-side bridge server, and the
 /// WebSocket back-channel for streamed events. Single shared instance keyed
 /// off the app process.
-///
-/// Marked `@unchecked Sendable` because we serialize access to mutable state
-/// via the internal lock.
-final class OrchestratorRuntime: @unchecked Sendable {
+nonisolated final class OrchestratorRuntime: @unchecked Sendable {
   static let shared = OrchestratorRuntime()
 
   private let logger = SupaLogger("OrchestratorRuntime")
   private let lock = NSLock()
 
+  // All mutable state below is guarded by `lock`.
   private var sidecarProcess: Process?
   private var sidecarPort: UInt16?
   private var sharedToken: String = ""
@@ -28,46 +27,53 @@ final class OrchestratorRuntime: @unchecked Sendable {
     return sidecarPort != nil
   }
 
-  /// One-time bootstrap. Wires the bridge server, spawns the sidecar, starts
-  /// the event-stream reader. Idempotent.
+  /// One-time bootstrap. Idempotent. `sharedToken` is the bearer secret used
+  /// by both the bridge (inbound auth) and the sidecar (outbound auth on
+  /// callbacks). Pass the SAME token to the bridge constructor.
   @MainActor
-  func bootstrap(bridgeServer: OrchestratorBridgeServer) throws {
-    lock.lock()
-    if bootstrapped {
-      lock.unlock()
-      return
-    }
-    self.bridgeServer = bridgeServer
-    sharedToken = UUID().uuidString
-    let (stream, continuation) = AsyncStream<OrchestratorEvent>.makeStream(
-      bufferingPolicy: .bufferingNewest(256)
-    )
-    eventStream = stream
-    eventContinuation = continuation
-    bootstrapped = true
-    lock.unlock()
+  func bootstrap(bridgeServer: OrchestratorBridgeServer, sharedToken: String) throws {
+    let alreadyBootstrapped: Bool = {
+      lock.lock(); defer { lock.unlock() }
+      if bootstrapped { return true }
+      bootstrapped = true
+      self.bridgeServer = bridgeServer
+      self.sharedToken = sharedToken
+      let (stream, continuation) = AsyncStream<OrchestratorEvent>.makeStream(
+        bufferingPolicy: .bufferingNewest(256)
+      )
+      eventStream = stream
+      eventContinuation = continuation
+      return false
+    }()
+    guard !alreadyBootstrapped else { return }
 
     let bridgePort = try bridgeServer.start()
+    lock.lock()
     self.bridgePort = bridgePort
+    let token = sharedToken
+    lock.unlock()
     do {
-      try spawnSidecar(bridgePort: bridgePort, sharedToken: sharedToken)
+      try spawnSidecar(bridgePort: bridgePort, sharedToken: token)
     } catch {
-      logger.error("Failed to spawn orchestrator sidecar: \(error). Orchestrator will be inert this session.")
+      logger.warning("Failed to spawn orchestrator sidecar: \(error). Orchestrator will be inert this session.")
     }
   }
 
   func shutdown() {
-    lock.lock()
-    let process = sidecarProcess
-    streamTask?.cancel()
-    streamTask = nil
-    eventContinuation?.finish()
-    eventContinuation = nil
-    sidecarProcess = nil
-    sidecarPort = nil
-    lock.unlock()
+    let (process, server): (Process?, OrchestratorBridgeServer?) = {
+      lock.lock(); defer { lock.unlock() }
+      let result = (sidecarProcess, bridgeServer)
+      streamTask?.cancel()
+      streamTask = nil
+      eventContinuation?.finish()
+      eventContinuation = nil
+      sidecarProcess = nil
+      sidecarPort = nil
+      bridgeServer = nil
+      return result
+    }()
     process?.terminate()
-    bridgeServer?.stop()
+    Task { @MainActor in server?.stop() }
   }
 
   func events() -> AsyncStream<OrchestratorEvent> {
@@ -112,19 +118,45 @@ final class OrchestratorRuntime: @unchecked Sendable {
       "--shared-token", sharedToken,
     ]
     process.currentDirectoryURL = sidecarDir
+    // Apps launched via LaunchServices inherit a minimal PATH that does not
+    // include /opt/homebrew/bin where `uv` lives. Augment so `env uv ...` works.
+    var env = ProcessInfo.processInfo.environment
+    let existingPath = env["PATH"] ?? ""
+    let extras = ["/opt/homebrew/bin", "/usr/local/bin", "\(NSHomeDirectory())/.local/bin"]
+    let merged = (extras + existingPath.split(separator: ":").map(String.init))
+      .reduce(into: [String]()) { acc, p in if !acc.contains(p) { acc.append(p) } }
+      .joined(separator: ":")
+    env["PATH"] = merged
+    process.environment = env
 
     let stdoutPipe = Pipe()
     let stderrPipe = Pipe()
     process.standardOutput = stdoutPipe
     process.standardError = stderrPipe
 
-    try process.run()
+    // Tee stderr to a fixed debug file so we can inspect spawn failures when
+    // launched via LaunchServices (where the app's own stdout is invisible).
+    let stderrLog = FileHandle(forWritingAtPath: "/tmp/supacode-orchestrator-sidecar.stderr.log")
+      ?? {
+        FileManager.default.createFile(atPath: "/tmp/supacode-orchestrator-sidecar.stderr.log", contents: nil)
+        return FileHandle(forWritingAtPath: "/tmp/supacode-orchestrator-sidecar.stderr.log")!
+      }()
+    stderrLog.write(Data("\n--- spawn at \(Date()) ---\n".utf8))
+    stderrLog.write(Data("env PATH=\(env["PATH"] ?? "<unset>")\n".utf8))
+    stderrLog.write(Data("cwd=\(sidecarDir.path)\n".utf8))
+    stderrLog.write(Data("args=\(process.arguments ?? [])\n".utf8))
+
+    do {
+      try process.run()
+    } catch {
+      stderrLog.write(Data("RUN FAILED: \(error)\n".utf8))
+      throw error
+    }
 
     lock.lock()
     sidecarProcess = process
     lock.unlock()
 
-    // Read stdout line-by-line for the SIDECAR_PORT=NNN line, then keep draining.
     DispatchQueue.global(qos: .utility).async { [weak self] in
       let handle = stdoutPipe.fileHandleForReading
       var buffer = Data()
@@ -140,16 +172,15 @@ final class OrchestratorRuntime: @unchecked Sendable {
     DispatchQueue.global(qos: .utility).async {
       let handle = stderrPipe.fileHandleForReading
       while let chunk = try? handle.read(upToCount: 4096), !chunk.isEmpty {
-        let text = String(data: chunk, encoding: .utf8) ?? ""
-        SupaLogger("OrchestratorRuntime").debug("[sidecar stderr] \(text)")
+        stderrLog.write(chunk)
       }
     }
   }
 
   private func handleSidecarStdoutLine(_ line: String) {
     let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-    if let portString = trimmed.split(separator: "=").last,
-      trimmed.hasPrefix("SIDECAR_PORT="),
+    if trimmed.hasPrefix("SIDECAR_PORT="),
+      let portString = trimmed.split(separator: "=").last,
       let port = UInt16(portString)
     {
       lock.lock()
@@ -163,30 +194,38 @@ final class OrchestratorRuntime: @unchecked Sendable {
   }
 
   private func locateSidecarDir() -> URL {
-    // Bundled location first; falls back to in-repo dev path.
     if let resource = Bundle.main.url(forResource: "orchestrator-sidecar", withExtension: nil) {
       return resource
     }
-    let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-    return cwd.appending(path: "bins/orchestrator-sidecar", directoryHint: .isDirectory)
+    // Dev fallback: the source tree alongside the .app. We walk up from the
+    // build product to find the repo root.
+    let bundlePath = Bundle.main.bundleURL
+    var probe = bundlePath
+    for _ in 0..<10 {
+      probe.deleteLastPathComponent()
+      let candidate = probe.appending(path: "bins/orchestrator-sidecar", directoryHint: .isDirectory)
+      if FileManager.default.fileExists(atPath: candidate.path) {
+        return candidate
+      }
+    }
+    // Last resort: hardcoded dev path.
+    return URL(filePath: "\(NSHomeDirectory())/supacode-orchestrator/bins/orchestrator-sidecar")
   }
 
   // MARK: - WebSocket event stream
 
   private func startEventStream(port: UInt16) async {
     let url = URL(string: "ws://127.0.0.1:\(port)/stream")!
-    let request: URLRequest = {
-      var req = URLRequest(url: url)
-      if !sharedToken.isEmpty {
-        req.setValue("Bearer \(sharedToken)", forHTTPHeaderField: "Authorization")
-      }
-      return req
-    }()
+    var req = URLRequest(url: url)
+    let token: String = lock.withLock { sharedToken }
+    if !token.isEmpty {
+      req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    }
     let session = URLSession(configuration: .ephemeral)
-    let task = session.webSocketTask(with: request)
+    let task = session.webSocketTask(with: req)
     task.resume()
 
-    streamTask = Task { [weak self] in
+    let streamTask = Task { [weak self] in
       while !Task.isCancelled {
         do {
           let message = try await task.receive()
@@ -207,6 +246,7 @@ final class OrchestratorRuntime: @unchecked Sendable {
       }
       task.cancel(with: .goingAway, reason: nil)
     }
+    lock.withLock { self.streamTask = streamTask }
   }
 
   private func dispatchWSPayload(_ text: String) {
@@ -245,7 +285,9 @@ final class OrchestratorRuntime: @unchecked Sendable {
     default:
       return
     }
+    lock.lock()
     eventContinuation?.yield(event)
+    lock.unlock()
   }
 
   // MARK: - HTTP helpers
@@ -256,7 +298,8 @@ final class OrchestratorRuntime: @unchecked Sendable {
   }
 
   private func request(method: String, path: String, body: Data?) async throws -> [String: Any]? {
-    guard let port = sidecarPort else {
+    let snapshot: (UInt16?, String) = lock.withLock { (sidecarPort, sharedToken) }
+    guard let port = snapshot.0 else {
       throw OrchestratorRuntimeError.notReady
     }
     var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)\(path)")!)
@@ -265,8 +308,8 @@ final class OrchestratorRuntime: @unchecked Sendable {
       req.httpBody = body
       req.setValue("application/json", forHTTPHeaderField: "Content-Type")
     }
-    if !sharedToken.isEmpty {
-      req.setValue("Bearer \(sharedToken)", forHTTPHeaderField: "Authorization")
+    if !snapshot.1.isEmpty {
+      req.setValue("Bearer \(snapshot.1)", forHTTPHeaderField: "Authorization")
     }
     let (responseData, response) = try await URLSession.shared.data(for: req)
     if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {

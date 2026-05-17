@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import SupacodeSettingsShared
 
 /// Tiny HTTP/1.1 server bound to 127.0.0.1 that lets the Python sidecar call
 /// back into Supacode. Built on `Network.framework` to avoid pulling in a
@@ -38,21 +39,36 @@ final class OrchestratorBridgeServer {
     params.acceptLocalOnly = true
     let listener = try NWListener(using: params, on: .any)
     self.listener = listener
+    let readyPort = DispatchSemaphore(value: 0)
+    let portBox = LockIsolated<UInt16?>(nil)
+    listener.stateUpdateHandler = { state in
+      if case .ready = state {
+        if let port = listener.port?.rawValue {
+          portBox.setValue(port)
+          readyPort.signal()
+        }
+      }
+    }
     listener.newConnectionHandler = { [weak self] connection in
       self?.queue.async { self?.handle(connection: connection) }
     }
     listener.start(queue: queue)
-    // Wait briefly for the port to be assigned.
-    let deadline = Date().addingTimeInterval(2)
-    while listener.port == nil, Date() < deadline {
-      RunLoop.current.run(until: Date().addingTimeInterval(0.02))
-    }
-    guard let port = listener.port?.rawValue else {
+    _ = readyPort.wait(timeout: .now() + 2.0)
+    guard let port = portBox.value else {
+      listener.cancel()
       throw OrchestratorBridgeError.listenerFailed
     }
     boundPort = port
     logger.info("OrchestratorBridge listening on 127.0.0.1:\(port)")
     return port
+  }
+
+  private nonisolated final class LockIsolated<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: Value
+    init(_ value: Value) { self._value = value }
+    var value: Value { lock.withLock { _value } }
+    func setValue(_ newValue: Value) { lock.withLock { _value = newValue } }
   }
 
   func stop() {
@@ -126,7 +142,7 @@ final class OrchestratorBridgeServer {
         respond(connection: connection, status: 204, body: "")
       }
     } catch {
-      logger.error("Handler for \(request.path) threw: \(error)")
+      logger.warning("Handler for \(request.path) threw: \(error)")
       respond(connection: connection, status: 500, body: "\(error)")
     }
   }
@@ -171,8 +187,9 @@ enum OrchestratorBridgeError: Error {
 }
 
 /// Minimal HTTP/1.1 request parser. Returns nil if the request is not yet
-/// fully buffered.
-struct HTTPRequest {
+/// fully buffered. `nonisolated` because the parser runs on libdispatch
+/// worker queues used by Network.framework, not on MainActor.
+nonisolated struct HTTPRequest {
   let method: String
   let path: String
   let headers: [String: String]

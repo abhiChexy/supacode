@@ -27,8 +27,8 @@ struct ConversationFeature {
     case sessionStarted(conversationID: UUID, sessionID: String?)
   }
 
-  @Dependency(\.conversationStore) var conversationStore
-  @Dependency(\.orchestratorClient) var orchestratorClient
+  @Dependency(ConversationStoreKey.self) var conversationStore
+  @Dependency(OrchestratorClientKey.self) var orchestratorClient
   @Dependency(\.uuid) var uuid
   @Dependency(\.date) var date
 
@@ -36,20 +36,22 @@ struct ConversationFeature {
 
   var body: some Reducer<State, Action> {
     Reduce { state, action in
+      let store = conversationStore
+      let orchestrator = orchestratorClient
       switch action {
       case .onAppear:
         guard !state.isLoaded else { return .none }
         return .merge(
           .run { send in
             do {
-              let loaded = try conversationStore.loadAll()
+              let loaded = try store.loadAll()
               await send(.loaded(loaded))
             } catch {
               await send(.loaded([]))
             }
           },
           .run { send in
-            for await event in orchestratorClient.events() {
+            for await event in orchestrator.events() {
               await send(.orchestratorEvent(event))
             }
           }
@@ -58,7 +60,6 @@ struct ConversationFeature {
       case .loaded(let conversations):
         state.conversations = conversations
         state.isLoaded = true
-        // Resume any sessions that have a saved sessionID.
         let resumes = conversations.compactMap { conversation -> (UUID, String)? in
           guard let sessionID = conversation.orchestratorSessionID else { return nil }
           return (conversation.id, sessionID)
@@ -67,10 +68,9 @@ struct ConversationFeature {
         return .run { send in
           for (cid, sessionID) in resumes {
             do {
-              let newID = try await orchestratorClient.startSession(cid, sessionID)
+              let newID = try await orchestrator.startSession(cid, sessionID)
               await send(.sessionStarted(conversationID: cid, sessionID: newID ?? sessionID))
             } catch {
-              // sidecar not ready; skip
             }
           }
         }
@@ -88,10 +88,9 @@ struct ConversationFeature {
           persist(conversation),
           .run { send in
             do {
-              let sessionID = try await orchestratorClient.startSession(id, nil)
+              let sessionID = try await orchestrator.startSession(id, nil)
               await send(.sessionStarted(conversationID: id, sessionID: sessionID))
             } catch {
-              // sidecar not yet ready — first user message will retry.
             }
           }
         )
@@ -109,7 +108,7 @@ struct ConversationFeature {
         return .merge(
           .send(.appendMessage(conversationID: conversationID, message: message)),
           .run { _ in
-            try? await orchestratorClient.sendUserMessage(conversationID, trimmed)
+            try? await orchestrator.sendUserMessage(conversationID, trimmed)
           }
         )
 
@@ -126,8 +125,8 @@ struct ConversationFeature {
           state.selectedConversationID = nil
         }
         return .run { _ in
-          try? await orchestratorClient.killSession(id)
-          try? conversationStore.delete(id)
+          try? await orchestrator.killSession(id)
+          try? store.delete(id)
         }
 
       case .assignWorkspace(let workspaceID, let conversationID):
@@ -215,22 +214,26 @@ struct ConversationFeature {
   }
 
   private func persist(_ conversation: Conversation) -> Effect<Action> {
-    .run { _ in
+    let store = conversationStore
+    let log = logger
+    return .run { _ in
       do {
-        try conversationStore.save(conversation)
+        try store.save(conversation)
       } catch {
-        logger.error("Failed to persist conversation \(conversation.id): \(error)")
+        log.warning("Failed to persist conversation \(conversation.id): \(error)")
       }
     }
   }
 
   private func persistAffected(_ conversations: IdentifiedArrayOf<Conversation>) -> Effect<Action> {
-    .run { _ in
+    let store = conversationStore
+    let log = logger
+    return .run { _ in
       for conversation in conversations {
         do {
-          try conversationStore.save(conversation)
+          try store.save(conversation)
         } catch {
-          logger.error("Failed to persist conversation \(conversation.id): \(error)")
+          log.warning("Failed to persist conversation \(conversation.id): \(error)")
         }
       }
     }

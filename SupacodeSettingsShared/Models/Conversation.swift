@@ -4,7 +4,7 @@ import Foundation
 /// group workspaces (worktrees) under a single coordinated task. The
 /// `workspaceIDs` are references, not ownership — workspaces continue to
 /// live in `RepositoriesFeature`.
-public struct Conversation: Identifiable, Codable, Equatable, Sendable {
+public nonisolated struct Conversation: Identifiable, Codable, Equatable, Sendable {
   public let id: UUID
   public var title: String
   public var createdAt: Date
@@ -31,7 +31,7 @@ public struct Conversation: Identifiable, Codable, Equatable, Sendable {
   }
 }
 
-public struct OrchestratorMessage: Identifiable, Codable, Equatable, Sendable {
+public nonisolated struct OrchestratorMessage: Identifiable, Codable, Equatable, Sendable {
   public let id: UUID
   public let role: Role
   /// Raw text. Tool messages (`toolUse`, `toolResult`) carry JSON-encoded payloads.

@@ -172,12 +172,16 @@ struct SupacodeApp: App {
   @MainActor
   private static func bootstrapOrchestrator(store: StoreOf<AppFeature>) {
     let runtime = OrchestratorRuntime.shared
-    let bridge = OrchestratorBridgeServer(sharedToken: UUID().uuidString)
+    // One shared token. The bridge checks it on inbound sidecar calls; the
+    // runtime sends it to the sidecar at spawn time so the sidecar can stamp
+    // it on every callback.
+    let token = UUID().uuidString
+    let bridge = OrchestratorBridgeServer(sharedToken: token)
     OrchestratorBridgeHandlers.register(on: bridge, store: store)
     do {
-      try runtime.bootstrap(bridgeServer: bridge)
+      try runtime.bootstrap(bridgeServer: bridge, sharedToken: token)
     } catch {
-      SupaLogger("OrchestratorRuntime").error("Bootstrap failed: \(error). Orchestrator features will be inert this session.")
+      SupaLogger("OrchestratorRuntime").warning("Bootstrap failed: \(error). Orchestrator features will be inert this session.")
     }
   }
 

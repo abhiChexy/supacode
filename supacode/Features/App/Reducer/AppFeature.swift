@@ -166,6 +166,9 @@ struct AppFeature {
       case .agentPresence:
         return .none
 
+      case .conversations:
+        return .none
+
       case .scenePhaseChanged(let phase):
         switch phase {
         case .active:

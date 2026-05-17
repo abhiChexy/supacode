@@ -8,14 +8,12 @@ import SupacodeSettingsShared
 /// `~/.supacode/conversations/<uuid>.json`. Mirrors the load/save shape of
 /// `SettingsFileStorage` but operates on a directory rather than a single file
 /// because conversations are independently loaded.
-struct ConversationStore: Sendable {
+nonisolated struct ConversationStore: Sendable {
   var loadAll: @Sendable () throws -> IdentifiedArrayOf<Conversation>
   var save: @Sendable (Conversation) throws -> Void
   var delete: @Sendable (UUID) throws -> Void
-}
 
-extension ConversationStore: DependencyKey {
-  static let liveValue = ConversationStore(
+  nonisolated static let live = ConversationStore(
     loadAll: {
       let dir = SupacodePaths.conversationsDirectory
       let fm = FileManager.default
@@ -36,7 +34,6 @@ extension ConversationStore: DependencyKey {
           let conversation = try decoder.decode(Conversation.self, from: data)
           conversations.append(conversation)
         } catch {
-          // Skip malformed conversation files rather than failing the whole load.
           continue
         }
       }
@@ -59,7 +56,7 @@ extension ConversationStore: DependencyKey {
     }
   )
 
-  static let testValue: ConversationStore = {
+  nonisolated static let test: ConversationStore = {
     let storage = LockIsolated<IdentifiedArrayOf<Conversation>>([])
     return ConversationStore(
       loadAll: { storage.value },
@@ -73,9 +70,14 @@ extension ConversationStore: DependencyKey {
   }()
 }
 
+nonisolated enum ConversationStoreKey: DependencyKey {
+  static let liveValue: ConversationStore = .live
+  static let testValue: ConversationStore = .test
+}
+
 extension DependencyValues {
-  var conversationStore: ConversationStore {
-    get { self[ConversationStore.self] }
-    set { self[ConversationStore.self] = newValue }
+  nonisolated var conversationStore: ConversationStore {
+    get { self[ConversationStoreKey.self] }
+    set { self[ConversationStoreKey.self] = newValue }
   }
 }
