@@ -7,6 +7,10 @@ import SwiftUI
 struct ConversationsSidebarSectionView: View {
   @Bindable var store: StoreOf<ConversationFeature>
   @State private var hoveredID: UUID?
+  /// Conversation IDs whose owned workspaces currently have at least one
+  /// agent waiting for input. Set from the parent so the sidebar can
+  /// surface "needs you" rows without re-reading repo state itself.
+  var attentionConversationIDs: Set<UUID> = []
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -73,10 +77,15 @@ struct ConversationsSidebarSectionView: View {
   private func row(for conversation: Conversation) -> some View {
     let isSelected = store.selectedConversationID == conversation.id
     let isInFlight = store.inFlightConversationIDs.contains(conversation.id)
+    let needsAttention = attentionConversationIDs.contains(conversation.id)
     let isHovered = hoveredID == conversation.id
     HStack(spacing: Theme.Spacing.s) {
       ZStack {
-        if conversation.isPinned {
+        if needsAttention {
+          Image(systemName: "exclamationmark.circle.fill")
+            .font(.system(size: 10))
+            .foregroundStyle(Theme.Color.statusWarning)
+        } else if conversation.isPinned {
           Image(systemName: "pin.fill")
             .font(.system(size: 8))
             .rotationEffect(.degrees(45))

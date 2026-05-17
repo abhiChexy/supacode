@@ -94,8 +94,11 @@ enum OrchestratorBridgeHandlers {
           .ensureInitialTab(worktree, runSetupScriptIfNew: true, focusing: false)
         )
       } else {
+        // --dangerously-skip-permissions so the child agent doesn't
+        // stop at every Edit/Write/Bash prompt — we have no UI to
+        // approve from inside the orchestrator surface.
         let escaped = trimmedTask.replacingOccurrences(of: "'", with: "'\\''")
-        let command = "claude '\(escaped)'\n"
+        let command = "claude --dangerously-skip-permissions '\(escaped)'\n"
         terminalManager.handleCommand(
           .createTabWithInput(worktree, input: command, runSetupScriptIfNew: true)
         )

@@ -207,7 +207,8 @@ struct ContentView: View {
           Theme.Color.backgroundPrimary.ignoresSafeArea()
           VStack(spacing: 0) {
             ConversationsSidebarSectionView(
-              store: store.scope(state: \.conversations, action: \.conversations)
+              store: store.scope(state: \.conversations, action: \.conversations),
+              attentionConversationIDs: attentionConversationIDs
             )
             // Supacode's legacy repo/worktree sidebar is intentionally
             // hidden in orchestrator mode — workspaces show in the
@@ -265,6 +266,25 @@ struct ContentView: View {
       return
     }
     store.send(.conversations(.deleteConversation(id)))
+  }
+
+  /// Conversations whose owned workspaces include at least one with an
+  /// agent waiting for input. Drives the orange ! marker in the sidebar.
+  private var attentionConversationIDs: Set<UUID> {
+    let items = store.repositories.sidebarItems
+    let waitingWorkspaceIDs: Set<String> = Set(
+      items
+        .filter { $0.hasAgentAwaitingInput }
+        .map(\.id)
+    )
+    guard !waitingWorkspaceIDs.isEmpty else { return [] }
+    var result: Set<UUID> = []
+    for c in store.conversations.conversations {
+      if c.workspaceIDs.contains(where: { waitingWorkspaceIDs.contains($0) }) {
+        result.insert(c.id)
+      }
+    }
+    return result
   }
 
   private var knownWorktreeCards: [WorkspaceCardModel] {

@@ -179,12 +179,6 @@ private struct WorkspaceCard: View {
         .buttonStyle(.plain)
         .help("Reveal path")
 
-        Button(action: openTerminal) {
-          actionLabel("Terminal", icon: "terminal")
-        }
-        .buttonStyle(.plain)
-        .help("Open Terminal here")
-
         Spacer()
       }
       .padding(.top, Theme.Spacing.xs)
@@ -236,16 +230,4 @@ private struct WorkspaceCard: View {
     .clipShape(Capsule())
   }
 
-  private func openTerminal() {
-    let script = """
-    tell application "Terminal"
-      activate
-      do script "cd \\"\(card.path)\\""
-    end tell
-    """
-    if let appleScript = NSAppleScript(source: script) {
-      var err: NSDictionary?
-      appleScript.executeAndReturnError(&err)
-    }
-  }
 }
