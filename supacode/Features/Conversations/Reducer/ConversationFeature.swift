@@ -41,6 +41,7 @@ struct ConversationFeature {
     case orchestratorEvent(OrchestratorEvent)
     case sessionStarted(conversationID: UUID, sessionID: String?)
     case interruptCurrent(conversationID: UUID)
+    case setModel(conversationID: UUID, model: String)
   }
 
   @Dependency(ConversationStoreKey.self) var conversationStore
@@ -146,6 +147,14 @@ struct ConversationFeature {
       case .interruptCurrent(let conversationID):
         return .run { _ in
           try? await orchestrator.interruptSession(conversationID)
+        }
+
+      case .setModel(let conversationID, let model):
+        var runtime = state.runtimeByConversationID[conversationID] ?? ConversationRuntime()
+        runtime.model = model
+        state.runtimeByConversationID[conversationID] = runtime
+        return .run { _ in
+          try? await orchestrator.setModel(conversationID, model)
         }
 
       case .selectConversation(let id):

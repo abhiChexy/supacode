@@ -112,6 +112,13 @@ nonisolated final class OrchestratorRuntime: @unchecked Sendable {
     )
   }
 
+  func setModel(conversationID: UUID, model: String) async throws {
+    _ = try await postJSON(
+      path: "/sessions/\(conversationID.uuidString)/model",
+      body: ["model": model]
+    )
+  }
+
   // MARK: - Sidecar lifecycle
 
   private func spawnSidecar(bridgePort: UInt16, sharedToken: String) throws {

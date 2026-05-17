@@ -55,7 +55,36 @@ async def create_session(request: web.Request) -> web.Response:
     )
     session_id = await session.start()
     _SESSIONS[cid] = session
+    # Broadcast initial server info so the UI's composer pills populate
+    # before the first turn fires.
+    info = session.initial_server_info()
+    if info:
+        await _broadcast({
+            "conversation_id": cid,
+            "type": "session_info",
+            "model": info.get("model"),
+            "permission_mode": info.get("permission_mode"),
+            "cwd": info.get("cwd"),
+        })
     return web.json_response({"session_id": session_id})
+
+
+async def set_model(request: web.Request) -> web.Response:
+    if not _check_auth(request):
+        return web.Response(status=401)
+    cid = request.match_info["conversation_id"]
+    session = _SESSIONS.get(cid)
+    if session is None:
+        return web.Response(status=404)
+    body = await request.json()
+    model = body.get("model")
+    await session.set_model(model)
+    await _broadcast({
+        "conversation_id": cid,
+        "type": "session_info",
+        "model": model,
+    })
+    return web.Response(status=204)
 
 
 async def send_message(request: web.Request) -> web.Response:
@@ -126,6 +155,7 @@ async def run_server(*, supacode_port: int, bind_port: int, shared_token: str, p
         web.post("/sessions", create_session),
         web.post("/sessions/{conversation_id}/messages", send_message),
         web.post("/sessions/{conversation_id}/interrupt", interrupt_session),
+        web.post("/sessions/{conversation_id}/model", set_model),
         web.delete("/sessions/{conversation_id}", delete_session),
         web.get("/stream", stream),
     ])

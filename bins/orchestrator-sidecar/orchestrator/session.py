@@ -104,8 +104,32 @@ class OrchestratorSession:
             traceback.print_exc()
             self._client = None
             return None
-        # session_id is populated after first turn — leave None for now.
+        # Probe for the active model + cwd immediately so the UI's
+        # composer pills don't sit on placeholder values until the first
+        # turn lands a SystemMessage.init.
+        try:
+            info = self._client.get_server_info()
+            if info:
+                self._initial_server_info = {
+                    "model": info.get("model"),
+                    "cwd": info.get("cwd") or os.path.expanduser("~"),
+                    "permission_mode": info.get("permissionMode"),
+                    "session_id": info.get("session_id"),
+                }
+        except Exception as exc:
+            print(f"[session] get_server_info failed: {exc}", flush=True)
         return self._resume_session_id
+
+    def initial_server_info(self) -> dict[str, Any] | None:
+        return getattr(self, "_initial_server_info", None)
+
+    async def set_model(self, model: str | None) -> None:
+        if self._client is None:
+            return
+        try:
+            self._client.set_model(model)
+        except Exception as exc:
+            print(f"[session] set_model failed: {exc}", flush=True)
 
     async def send_user_message(self, content: str) -> AsyncIterator[dict[str, Any]]:
         """Send a user message; yields normalized event dicts."""

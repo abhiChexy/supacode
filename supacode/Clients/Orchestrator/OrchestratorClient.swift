@@ -10,6 +10,7 @@ nonisolated struct OrchestratorClient: Sendable {
   var sendUserMessage: @Sendable (_ conversationID: UUID, _ content: String) async throws -> Void
   var killSession: @Sendable (_ conversationID: UUID) async throws -> Void
   var interruptSession: @Sendable (_ conversationID: UUID) async throws -> Void
+  var setModel: @Sendable (_ conversationID: UUID, _ model: String) async throws -> Void
   var events: @Sendable () -> AsyncStream<OrchestratorEvent>
   var isReady: @Sendable () -> Bool
 
@@ -32,6 +33,9 @@ nonisolated struct OrchestratorClient: Sendable {
     interruptSession: { conversationID in
       try await OrchestratorRuntime.shared.interruptSession(conversationID: conversationID)
     },
+    setModel: { conversationID, model in
+      try await OrchestratorRuntime.shared.setModel(conversationID: conversationID, model: model)
+    },
     events: { OrchestratorRuntime.shared.events() },
     isReady: { OrchestratorRuntime.shared.isReady }
   )
@@ -41,6 +45,7 @@ nonisolated struct OrchestratorClient: Sendable {
     sendUserMessage: { _, _ in },
     killSession: { _ in },
     interruptSession: { _ in },
+    setModel: { _, _ in },
     events: { AsyncStream { $0.finish() } },
     isReady: { false }
   )

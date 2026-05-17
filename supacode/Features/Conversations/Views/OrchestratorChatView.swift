@@ -214,14 +214,16 @@ struct OrchestratorChatView: View {
 
   private var composerToolbar: some View {
     HStack(spacing: Theme.Spacing.s) {
-      Pill(icon: "sparkle", label: runtime.model ?? "claude")
+      ModelPickerPill(
+        currentModel: runtime.model,
+        onPick: { model in
+          store.send(.setModel(conversationID: conversation.id, model: model))
+        }
+      )
       if runtime.totalInputTokens > 0 || runtime.totalOutputTokens > 0 {
-        Pill(icon: "circle.lefthalf.filled",
-             label: usageLabel)
+        Pill(icon: "circle.lefthalf.filled", label: usageLabel)
       }
-      if let cwd = runtime.cwd {
-        Pill(icon: "folder", label: cwdShortLabel(cwd))
-      }
+      Pill(icon: "folder", label: cwdShortLabel(runtime.cwd ?? NSHomeDirectory()))
       Spacer()
       if isInFlight {
         Button {
@@ -306,6 +308,68 @@ private struct Pill: View {
     .padding(.vertical, 4)
     .background(Theme.Color.backgroundPrimary.opacity(0.6))
     .clipShape(Capsule())
+  }
+}
+
+private struct ModelOption: Identifiable, Hashable {
+  let id: String
+  let display: String
+}
+
+private let modelOptions: [ModelOption] = [
+  .init(id: "claude-opus-4-7", display: "Opus 4.7"),
+  .init(id: "claude-sonnet-4-6", display: "Sonnet 4.6"),
+  .init(id: "claude-haiku-4-5", display: "Haiku 4.5"),
+  .init(id: "default", display: "Default"),
+]
+
+private struct ModelPickerPill: View {
+  let currentModel: String?
+  let onPick: (String) -> Void
+
+  private var displayLabel: String {
+    guard let currentModel else { return "Model" }
+    if let match = modelOptions.first(where: { currentModel.hasPrefix($0.id) || currentModel == $0.id }) {
+      return match.display
+    }
+    return currentModel
+  }
+
+  var body: some View {
+    Menu {
+      ForEach(modelOptions) { option in
+        Button {
+          onPick(option.id)
+        } label: {
+          HStack {
+            Text(option.display)
+            if let currentModel, currentModel.hasPrefix(option.id) {
+              Spacer()
+              Image(systemName: "checkmark")
+            }
+          }
+        }
+      }
+    } label: {
+      HStack(spacing: 4) {
+        Image(systemName: "sparkle")
+          .font(.system(size: 9))
+          .foregroundStyle(Theme.Color.textTertiary)
+        Text(displayLabel)
+          .font(Theme.Font.metadata)
+          .foregroundStyle(Theme.Color.textSecondary)
+        Image(systemName: "chevron.down")
+          .font(.system(size: 7, weight: .bold))
+          .foregroundStyle(Theme.Color.textTertiary)
+      }
+      .padding(.horizontal, Theme.Spacing.s)
+      .padding(.vertical, 4)
+      .background(Theme.Color.backgroundPrimary.opacity(0.6))
+      .clipShape(Capsule())
+    }
+    .menuStyle(.borderlessButton)
+    .menuIndicator(.hidden)
+    .fixedSize()
   }
 }
 
