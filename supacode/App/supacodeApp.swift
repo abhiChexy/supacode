@@ -166,18 +166,18 @@ struct SupacodeApp: App {
     appDelegate.appStore = appStore
     appDelegate.terminalManager = terminalManager
     Self.configureSocketHandlers(terminalManager: terminalManager, store: appStore)
-    Self.bootstrapOrchestrator(store: appStore)
+    Self.bootstrapOrchestrator(store: appStore, terminalManager: terminalManager)
   }
 
   @MainActor
-  private static func bootstrapOrchestrator(store: StoreOf<AppFeature>) {
+  private static func bootstrapOrchestrator(
+    store: StoreOf<AppFeature>,
+    terminalManager: WorktreeTerminalManager
+  ) {
     let runtime = OrchestratorRuntime.shared
-    // One shared token. The bridge checks it on inbound sidecar calls; the
-    // runtime sends it to the sidecar at spawn time so the sidecar can stamp
-    // it on every callback.
     let token = UUID().uuidString
     let bridge = OrchestratorBridgeServer(sharedToken: token)
-    OrchestratorBridgeHandlers.register(on: bridge, store: store)
+    OrchestratorBridgeHandlers.register(on: bridge, store: store, terminalManager: terminalManager)
     do {
       try runtime.bootstrap(bridgeServer: bridge, sharedToken: token)
     } catch {

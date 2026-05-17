@@ -8,7 +8,11 @@ import SupacodeSettingsShared
 enum OrchestratorBridgeHandlers {
   private static let logger = SupaLogger("OrchestratorBridge")
 
-  static func register(on server: OrchestratorBridgeServer, store: StoreOf<AppFeature>) {
+  static func register(
+    on server: OrchestratorBridgeServer,
+    store: StoreOf<AppFeature>,
+    terminalManager: WorktreeTerminalManager
+  ) {
     server.register(path: "/commands/list_known_repos") { _ in
       let repos = store.state.repositories.repositories
       let payload = repos.map { repo -> [String: Any] in
@@ -84,16 +88,15 @@ enum OrchestratorBridgeHandlers {
         return ["error": "Worktree creation timed out for branch \(branch)"]
       }
       // Open a terminal tab inside the new worktree running Claude Code.
-      @Dependency(TerminalClient.self) var terminalClient
       let trimmedTask = initialTask.trimmingCharacters(in: .whitespacesAndNewlines)
       if trimmedTask.isEmpty {
-        terminalClient.send(
+        terminalManager.handleCommand(
           .ensureInitialTab(worktree, runSetupScriptIfNew: true, focusing: false)
         )
       } else {
         let escaped = trimmedTask.replacingOccurrences(of: "'", with: "'\\''")
         let command = "claude '\(escaped)'\n"
-        terminalClient.send(
+        terminalManager.handleCommand(
           .createTabWithInput(worktree, input: command, runSetupScriptIfNew: true)
         )
       }
@@ -111,20 +114,16 @@ enum OrchestratorBridgeHandlers {
       guard let worktree = findWorktree(in: store, id: workspaceID) else {
         return ["error": "workspace not found: \(workspaceID)"]
       }
-      @Dependency(TerminalClient.self) var terminalClient
-      guard let tabID = terminalClient.selectedTabID(worktree.id) else {
+      guard let tabID = terminalManager.stateIfExists(for: worktree.id)?.tabManager.selectedTabId else {
         return ["error": "no active tab for workspace"]
       }
-      // Find any surface in that tab to send input to.
-      // For simplicity, route via the same createTabWithInput pattern if
-      // there's no active tab — but we already have tabID, so use focus.
-      terminalClient.send(
+      terminalManager.handleCommand(
         .selectTab(worktree, tabID: tabID)
       )
       // TerminalClient.focusSurface accepts an `input: String?` parameter.
       // We don't know the surface ID here without scrollback access; the
       // simplest reliable path is to spawn a fresh tab carrying the input.
-      terminalClient.send(
+      terminalManager.handleCommand(
         .createTabWithInput(worktree, input: text, runSetupScriptIfNew: false)
       )
       return nil
@@ -137,8 +136,7 @@ enum OrchestratorBridgeHandlers {
       }
       // Scrollback isn't exposed by GhosttySurface in a clean way yet;
       // return a thin status snapshot the agent can reason about.
-      @Dependency(TerminalClient.self) var terminalClient
-      let hasTab = terminalClient.selectedTabID(worktree.id) != nil
+      let hasTab = terminalManager.stateIfExists(for: worktree.id)?.tabManager.selectedTabId != nil
       return [
         "workspace_id": worktree.id,
         "branch": worktree.name,
