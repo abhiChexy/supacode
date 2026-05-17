@@ -157,29 +157,52 @@ def _normalize_message(raw: Any, conversation_id: str) -> list[dict[str, Any]]:
             TextBlock,
             ToolResultBlock,
             ToolUseBlock,
+            UserMessage,
         )
     except ImportError:
         return [{**base, "type": "raw", "value": repr(raw)}]
 
+    def _emit_block(block: Any) -> None:
+        if isinstance(block, TextBlock):
+            out.append({**base, "type": "assistant_delta", "text": block.text})
+        elif isinstance(block, ToolUseBlock):
+            out.append({
+                **base,
+                "type": "tool_use",
+                "tool": block.name,
+                "id": block.id,
+                "input": block.input,
+            })
+        elif isinstance(block, ToolResultBlock):
+            # Tool result content may be a string, a list of blocks, or other
+            # structured data — coerce to a readable string.
+            content = block.content
+            if isinstance(content, list):
+                parts: list[str] = []
+                for c in content:
+                    text = getattr(c, "text", None)
+                    parts.append(text if isinstance(text, str) else str(c))
+                content_str = "\n".join(parts)
+            else:
+                content_str = str(content) if content is not None else ""
+            out.append({
+                **base,
+                "type": "tool_result",
+                "tool_use_id": block.tool_use_id,
+                "result": content_str,
+            })
+
     if isinstance(raw, AssistantMessage):
         for block in raw.content:
-            if isinstance(block, TextBlock):
-                out.append({**base, "type": "assistant_delta", "text": block.text})
-            elif isinstance(block, ToolUseBlock):
-                out.append({
-                    **base,
-                    "type": "tool_use",
-                    "tool": block.name,
-                    "id": block.id,
-                    "input": block.input,
-                })
-            elif isinstance(block, ToolResultBlock):
-                out.append({
-                    **base,
-                    "type": "tool_result",
-                    "tool_use_id": block.tool_use_id,
-                    "result": str(block.content) if block.content else "",
-                })
+            _emit_block(block)
+    elif isinstance(raw, UserMessage):
+        # Tool results from the SDK come back wrapped in a UserMessage with
+        # ToolResultBlock content. Pass them through so the UI can resolve
+        # pending tool_use rows.
+        content = getattr(raw, "content", None)
+        if isinstance(content, list):
+            for block in content:
+                _emit_block(block)
     elif isinstance(raw, ResultMessage):
         out.append({
             **base,
