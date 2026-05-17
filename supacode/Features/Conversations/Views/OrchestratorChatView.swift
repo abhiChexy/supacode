@@ -7,17 +7,27 @@ struct OrchestratorChatView: View {
   @Bindable var store: StoreOf<ConversationFeature>
   let conversation: Conversation
   @State private var draft: String = ""
+  @State private var isUserScrolledAway = false
 
   private var isInFlight: Bool {
     store.inFlightConversationIDs.contains(conversation.id)
+  }
+  private var runtime: ConversationFeature.ConversationRuntime {
+    store.runtimeByConversationID[conversation.id] ?? .init()
   }
 
   var body: some View {
     VStack(spacing: 0) {
       header
       Divider().background(Theme.Color.borderSubtle)
-      messages
-      Divider().background(Theme.Color.borderSubtle)
+      ZStack(alignment: .bottom) {
+        messages
+        if isUserScrolledAway {
+          scrollToBottomPill
+            .padding(.bottom, Theme.Spacing.s)
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+      }
       composer
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -63,26 +73,63 @@ struct OrchestratorChatView: View {
           }
           if isInFlight {
             ThinkingRow()
-              .id("thinking-indicator")
           }
+          Color.clear
+            .frame(height: 1)
+            .id("bottom-anchor")
+            .onAppear { isUserScrolledAway = false }
+            .onDisappear { isUserScrolledAway = true }
         }
         .padding(Theme.Spacing.l)
       }
-      .onChange(of: conversation.orchestratorMessages.last?.id) { _, _ in
-        scrollToBottom(proxy)
+      .onChange(of: conversation.orchestratorMessages.count) { _, _ in
+        autoScroll(proxy)
       }
-      .onChange(of: isInFlight) { _, _ in
-        scrollToBottom(proxy)
+      .onChange(of: lastMessageContentLength) { _, _ in
+        autoScroll(proxy)
+      }
+      .onChange(of: isInFlight) { _, newValue in
+        if newValue { isUserScrolledAway = false }
+        autoScroll(proxy)
+      }
+      .onChange(of: store.selectedConversationID) { _, _ in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+          proxy.scrollTo("bottom-anchor", anchor: .bottom)
+        }
       }
     }
   }
 
-  private func scrollToBottom(_ proxy: ScrollViewProxy) {
-    let anchor = isInFlight ? "thinking-indicator" : (conversation.orchestratorMessages.last?.id.uuidString ?? "")
-    guard !anchor.isEmpty else { return }
+  /// Used as a change-detection anchor so streaming deltas trigger autoscroll.
+  private var lastMessageContentLength: Int {
+    conversation.orchestratorMessages.last?.content.count ?? 0
+  }
+
+  private func autoScroll(_ proxy: ScrollViewProxy) {
+    guard !isUserScrolledAway else { return }
     withAnimation(Theme.Motion.messageFade) {
-      proxy.scrollTo(anchor, anchor: .bottom)
+      proxy.scrollTo("bottom-anchor", anchor: .bottom)
     }
+  }
+
+  private var scrollToBottomPill: some View {
+    Button {
+      isUserScrolledAway = false
+    } label: {
+      HStack(spacing: 4) {
+        Image(systemName: "chevron.down")
+          .font(.system(size: 10, weight: .bold))
+        Text("Jump to latest")
+          .font(Theme.Font.metadata)
+      }
+      .padding(.horizontal, Theme.Spacing.m)
+      .padding(.vertical, 6)
+      .background(Theme.Color.backgroundElevated)
+      .foregroundStyle(Theme.Color.textPrimary)
+      .clipShape(Capsule())
+      .overlay(Capsule().stroke(Theme.Color.borderSubtle, lineWidth: 1))
+    }
+    .buttonStyle(.plain)
   }
 
   private var emptyState: some View {
@@ -151,23 +198,81 @@ struct OrchestratorChatView: View {
   // MARK: Composer
 
   private var composer: some View {
-    HStack(alignment: .bottom, spacing: Theme.Spacing.s) {
+    VStack(alignment: .leading, spacing: 0) {
       ComposerTextEditor(text: $draft, onCommit: send)
-        .frame(minHeight: 28, maxHeight: 160)
+        .frame(minHeight: 40, maxHeight: 200)
         .padding(.horizontal, Theme.Spacing.m)
-        .padding(.vertical, Theme.Spacing.s)
-        .background(Theme.Color.backgroundElevated)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.input))
-      Button(action: send) {
-        Image(systemName: "arrow.up.circle.fill")
-          .font(.system(size: 22))
-          .foregroundStyle(canSend ? Theme.Color.accent : Theme.Color.textTertiary)
-      }
-      .buttonStyle(.plain)
-      .keyboardShortcut(.return, modifiers: [])
-      .disabled(!canSend)
+        .padding(.top, Theme.Spacing.m)
+        .padding(.bottom, Theme.Spacing.s)
+      composerToolbar
     }
+    .background(Theme.Color.backgroundElevated)
+    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.input))
+    .overlay(RoundedRectangle(cornerRadius: Theme.Radius.input).stroke(Theme.Color.borderSubtle, lineWidth: 1))
     .padding(Theme.Spacing.m)
+  }
+
+  private var composerToolbar: some View {
+    HStack(spacing: Theme.Spacing.s) {
+      Pill(icon: "sparkle", label: runtime.model ?? "claude")
+      if runtime.totalInputTokens > 0 || runtime.totalOutputTokens > 0 {
+        Pill(icon: "circle.lefthalf.filled",
+             label: usageLabel)
+      }
+      if let cwd = runtime.cwd {
+        Pill(icon: "folder", label: cwdShortLabel(cwd))
+      }
+      Spacer()
+      if isInFlight {
+        Button {
+          store.send(.interruptCurrent(conversationID: conversation.id))
+        } label: {
+          Image(systemName: "stop.fill")
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: 26, height: 26)
+            .background(Theme.Color.statusError)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(".", modifiers: .command)
+        .help("Stop (⌘.)")
+      } else {
+        Button(action: send) {
+          Image(systemName: "arrow.up")
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(canSend ? .white : Theme.Color.textTertiary)
+            .frame(width: 26, height: 26)
+            .background(canSend ? Theme.Color.accent : Theme.Color.backgroundPrimary)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .disabled(!canSend)
+        .help("Send (Return)")
+      }
+    }
+    .padding(.horizontal, Theme.Spacing.s)
+    .padding(.vertical, Theme.Spacing.xs)
+    .padding(.bottom, Theme.Spacing.xs)
+  }
+
+  private var usageLabel: String {
+    let total = runtime.totalInputTokens + runtime.totalOutputTokens
+    let formatted: String
+    if total >= 1_000_000 { formatted = String(format: "%.1fM", Double(total) / 1_000_000) }
+    else if total >= 1_000 { formatted = String(format: "%.1fk", Double(total) / 1_000) }
+    else { formatted = "\(total)" }
+    if runtime.totalCostUSD > 0 {
+      return "\(formatted) · $\(String(format: "%.2f", runtime.totalCostUSD))"
+    }
+    return formatted
+  }
+
+  private func cwdShortLabel(_ path: String) -> String {
+    let home = NSHomeDirectory()
+    if path == home { return "~" }
+    if path.hasPrefix(home + "/") { return "~/" + String(path.dropFirst(home.count + 1)) }
+    return path
   }
 
   private var canSend: Bool {
@@ -179,6 +284,28 @@ struct OrchestratorChatView: View {
     let content = draft
     draft = ""
     store.send(.sendUserMessage(conversationID: conversation.id, content: content))
+  }
+}
+
+private struct Pill: View {
+  let icon: String
+  let label: String
+
+  var body: some View {
+    HStack(spacing: 4) {
+      Image(systemName: icon)
+        .font(.system(size: 9))
+        .foregroundStyle(Theme.Color.textTertiary)
+      Text(label)
+        .font(Theme.Font.metadata)
+        .foregroundStyle(Theme.Color.textSecondary)
+        .lineLimit(1)
+        .truncationMode(.middle)
+    }
+    .padding(.horizontal, Theme.Spacing.s)
+    .padding(.vertical, 4)
+    .background(Theme.Color.backgroundPrimary.opacity(0.6))
+    .clipShape(Capsule())
   }
 }
 

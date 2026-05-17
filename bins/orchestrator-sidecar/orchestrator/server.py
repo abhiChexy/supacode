@@ -77,6 +77,20 @@ async def send_message(request: web.Request) -> web.Response:
     return web.Response(status=202)
 
 
+async def interrupt_session(request: web.Request) -> web.Response:
+    if not _check_auth(request):
+        return web.Response(status=401)
+    cid = request.match_info["conversation_id"]
+    session = _SESSIONS.get(cid)
+    if session is None:
+        return web.Response(status=404)
+    try:
+        await session.interrupt()
+    except Exception as exc:
+        return web.Response(status=500, text=str(exc))
+    return web.Response(status=204)
+
+
 async def delete_session(request: web.Request) -> web.Response:
     if not _check_auth(request):
         return web.Response(status=401)
@@ -111,6 +125,7 @@ async def run_server(*, supacode_port: int, bind_port: int, shared_token: str, p
         web.get("/healthz", healthz),
         web.post("/sessions", create_session),
         web.post("/sessions/{conversation_id}/messages", send_message),
+        web.post("/sessions/{conversation_id}/interrupt", interrupt_session),
         web.delete("/sessions/{conversation_id}", delete_session),
         web.get("/stream", stream),
     ])

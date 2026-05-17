@@ -9,6 +9,7 @@ nonisolated struct OrchestratorClient: Sendable {
   var startSession: @Sendable (_ conversationID: UUID, _ resumeSessionID: String?) async throws -> String?
   var sendUserMessage: @Sendable (_ conversationID: UUID, _ content: String) async throws -> Void
   var killSession: @Sendable (_ conversationID: UUID) async throws -> Void
+  var interruptSession: @Sendable (_ conversationID: UUID) async throws -> Void
   var events: @Sendable () -> AsyncStream<OrchestratorEvent>
   var isReady: @Sendable () -> Bool
 
@@ -28,6 +29,9 @@ nonisolated struct OrchestratorClient: Sendable {
     killSession: { conversationID in
       try await OrchestratorRuntime.shared.killSession(conversationID: conversationID)
     },
+    interruptSession: { conversationID in
+      try await OrchestratorRuntime.shared.interruptSession(conversationID: conversationID)
+    },
     events: { OrchestratorRuntime.shared.events() },
     isReady: { OrchestratorRuntime.shared.isReady }
   )
@@ -36,6 +40,7 @@ nonisolated struct OrchestratorClient: Sendable {
     startSession: { _, _ in nil },
     sendUserMessage: { _, _ in },
     killSession: { _ in },
+    interruptSession: { _ in },
     events: { AsyncStream { $0.finish() } },
     isReady: { false }
   )
@@ -46,6 +51,8 @@ nonisolated enum OrchestratorEvent: Equatable, Sendable {
   case toolUse(conversationID: UUID, tool: String, id: String, inputJSON: String)
   case toolResult(conversationID: UUID, toolUseID: String, resultJSON: String)
   case turnComplete(conversationID: UUID, sessionID: String?)
+  case sessionInfo(conversationID: UUID, model: String?, permissionMode: String?, cwd: String?)
+  case usage(conversationID: UUID, inputTokens: Int, outputTokens: Int, cacheReadTokens: Int, cacheCreationTokens: Int, costUSD: Double?)
   case error(conversationID: UUID?, message: String)
 }
 

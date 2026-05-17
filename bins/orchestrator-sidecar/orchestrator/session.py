@@ -127,6 +127,14 @@ class OrchestratorSession:
                 traceback.print_exc()
                 yield {"type": "error", "message": str(exc)}
 
+    async def interrupt(self) -> None:
+        if self._client is None:
+            return
+        try:
+            await self._client.interrupt()
+        except Exception as exc:
+            print(f"[session] interrupt failed: {exc}", flush=True)
+
     async def close(self) -> None:
         if self._client is not None:
             try:
@@ -199,15 +207,35 @@ def _normalize_message(raw: Any, conversation_id: str) -> list[dict[str, Any]]:
             for block in content:
                 _emit_block(block)
     elif isinstance(raw, ResultMessage):
+        usage = getattr(raw, "usage", {}) or {}
+        cost = getattr(raw, "total_cost_usd", None)
+        out.append({
+            **base,
+            "type": "usage",
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
+            "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0),
+            "cost_usd": cost,
+        })
         out.append({
             **base,
             "type": "turn_complete",
             "session_id": getattr(raw, "session_id", None),
         })
     elif isinstance(raw, SystemMessage):
-        # init / progress / etc. — capture session_id if available
+        data = getattr(raw, "data", None)
+        if isinstance(data, dict) and data.get("subtype") == "init":
+            out.append({
+                **base,
+                "type": "session_info",
+                "model": data.get("model"),
+                "permission_mode": data.get("permissionMode"),
+                "cwd": data.get("cwd"),
+                "session_id": data.get("session_id"),
+            })
         sid = getattr(raw, "session_id", None) or (
-            raw.data.get("session_id") if isinstance(getattr(raw, "data", None), dict) else None
+            data.get("session_id") if isinstance(data, dict) else None
         )
         if sid:
             out.append({**base, "type": "turn_complete", "session_id": sid})

@@ -13,6 +13,18 @@ struct ConversationFeature {
     /// Conversations with an in-flight turn — used to drive the thinking
     /// indicator. Cleared on turn_complete or error.
     var inFlightConversationIDs: Set<UUID> = []
+    /// Per-conversation runtime info — model, cwd, usage. Not persisted.
+    var runtimeByConversationID: [UUID: ConversationRuntime] = [:]
+  }
+
+  struct ConversationRuntime: Equatable {
+    var model: String?
+    var cwd: String?
+    var totalInputTokens: Int = 0
+    var totalOutputTokens: Int = 0
+    var totalCacheReadTokens: Int = 0
+    var totalCacheCreationTokens: Int = 0
+    var totalCostUSD: Double = 0
   }
 
   enum Action: Equatable {
@@ -28,6 +40,7 @@ struct ConversationFeature {
     case sendUserMessage(conversationID: UUID, content: String)
     case orchestratorEvent(OrchestratorEvent)
     case sessionStarted(conversationID: UUID, sessionID: String?)
+    case interruptCurrent(conversationID: UUID)
   }
 
   @Dependency(ConversationStoreKey.self) var conversationStore
@@ -118,6 +131,11 @@ struct ConversationFeature {
 
       case .orchestratorEvent(let event):
         return handle(event: event, state: &state)
+
+      case .interruptCurrent(let conversationID):
+        return .run { _ in
+          try? await orchestrator.interruptSession(conversationID)
+        }
 
       case .selectConversation(let id):
         state.selectedConversationID = id
@@ -216,6 +234,23 @@ struct ConversationFeature {
       state.inFlightConversationIDs.remove(conversationID)
       let msg = OrchestratorMessage(id: uuid(), role: .system, content: "[error] \(message)", timestamp: date.now)
       return .send(.appendMessage(conversationID: conversationID, message: msg))
+
+    case .sessionInfo(let conversationID, let model, _, let cwd):
+      var runtime = state.runtimeByConversationID[conversationID] ?? ConversationRuntime()
+      if let model { runtime.model = model }
+      if let cwd { runtime.cwd = cwd }
+      state.runtimeByConversationID[conversationID] = runtime
+      return .none
+
+    case .usage(let conversationID, let inputTokens, let outputTokens, let cacheReadTokens, let cacheCreationTokens, let costUSD):
+      var runtime = state.runtimeByConversationID[conversationID] ?? ConversationRuntime()
+      runtime.totalInputTokens += inputTokens
+      runtime.totalOutputTokens += outputTokens
+      runtime.totalCacheReadTokens += cacheReadTokens
+      runtime.totalCacheCreationTokens += cacheCreationTokens
+      if let costUSD { runtime.totalCostUSD += costUSD }
+      state.runtimeByConversationID[conversationID] = runtime
+      return .none
     }
   }
 

@@ -105,6 +105,13 @@ nonisolated final class OrchestratorRuntime: @unchecked Sendable {
     )
   }
 
+  func interruptSession(conversationID: UUID) async throws {
+    _ = try await postJSON(
+      path: "/sessions/\(conversationID.uuidString)/interrupt",
+      body: [:]
+    )
+  }
+
   // MARK: - Sidecar lifecycle
 
   private func spawnSidecar(bridgePort: UInt16, sharedToken: String) throws {
@@ -308,6 +315,24 @@ nonisolated final class OrchestratorRuntime: @unchecked Sendable {
     case "turn_complete":
       guard let cid else { return }
       event = .turnComplete(conversationID: cid, sessionID: dict["session_id"] as? String)
+    case "session_info":
+      guard let cid else { return }
+      event = .sessionInfo(
+        conversationID: cid,
+        model: dict["model"] as? String,
+        permissionMode: dict["permission_mode"] as? String,
+        cwd: dict["cwd"] as? String
+      )
+    case "usage":
+      guard let cid else { return }
+      event = .usage(
+        conversationID: cid,
+        inputTokens: (dict["input_tokens"] as? Int) ?? 0,
+        outputTokens: (dict["output_tokens"] as? Int) ?? 0,
+        cacheReadTokens: (dict["cache_read_input_tokens"] as? Int) ?? 0,
+        cacheCreationTokens: (dict["cache_creation_input_tokens"] as? Int) ?? 0,
+        costUSD: dict["cost_usd"] as? Double
+      )
     case "error":
       event = .error(conversationID: cid, message: dict["message"] as? String ?? "unknown")
     default:
