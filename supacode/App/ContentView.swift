@@ -231,9 +231,10 @@ struct ContentView: View {
         .id(conversation.id)
         .frame(minWidth: 240, idealWidth: 320, maxWidth: 420)
       }
-    } else if store.repositories.selectedWorktreeID != nil {
-      WorktreeDetailView(store: store, terminalManager: terminalManager)
     } else {
+      // Orchestrator-mode default: never drop into Supacode's raw
+      // WorktreeDetailView. Auto-selecting a newly-spawned worktree
+      // would otherwise hijack the detail pane.
       ConversationEmptyStateView(
         store: store.scope(state: \.conversations, action: \.conversations)
       )
