@@ -22,9 +22,13 @@ struct ConversationFeature {
     case unassignWorkspace(workspaceID: String, conversationID: UUID)
     case renameConversation(id: UUID, title: String)
     case appendMessage(conversationID: UUID, message: OrchestratorMessage)
+    case sendUserMessage(conversationID: UUID, content: String)
+    case orchestratorEvent(OrchestratorEvent)
+    case sessionStarted(conversationID: UUID, sessionID: String?)
   }
 
   @Dependency(\.conversationStore) var conversationStore
+  @Dependency(\.orchestratorClient) var orchestratorClient
   @Dependency(\.uuid) var uuid
   @Dependency(\.date) var date
 
@@ -35,19 +39,41 @@ struct ConversationFeature {
       switch action {
       case .onAppear:
         guard !state.isLoaded else { return .none }
-        return .run { send in
-          do {
-            let loaded = try conversationStore.loadAll()
-            await send(.loaded(loaded))
-          } catch {
-            await send(.loaded([]))
+        return .merge(
+          .run { send in
+            do {
+              let loaded = try conversationStore.loadAll()
+              await send(.loaded(loaded))
+            } catch {
+              await send(.loaded([]))
+            }
+          },
+          .run { send in
+            for await event in orchestratorClient.events() {
+              await send(.orchestratorEvent(event))
+            }
           }
-        }
+        )
 
       case .loaded(let conversations):
         state.conversations = conversations
         state.isLoaded = true
-        return .none
+        // Resume any sessions that have a saved sessionID.
+        let resumes = conversations.compactMap { conversation -> (UUID, String)? in
+          guard let sessionID = conversation.orchestratorSessionID else { return nil }
+          return (conversation.id, sessionID)
+        }
+        guard !resumes.isEmpty else { return .none }
+        return .run { send in
+          for (cid, sessionID) in resumes {
+            do {
+              let newID = try await orchestratorClient.startSession(cid, sessionID)
+              await send(.sessionStarted(conversationID: cid, sessionID: newID ?? sessionID))
+            } catch {
+              // sidecar not ready; skip
+            }
+          }
+        }
 
       case .createConversation(let title):
         let conversation = Conversation(
@@ -57,7 +83,38 @@ struct ConversationFeature {
         )
         state.conversations.append(conversation)
         state.selectedConversationID = conversation.id
+        let id = conversation.id
+        return .merge(
+          persist(conversation),
+          .run { send in
+            do {
+              let sessionID = try await orchestratorClient.startSession(id, nil)
+              await send(.sessionStarted(conversationID: id, sessionID: sessionID))
+            } catch {
+              // sidecar not yet ready — first user message will retry.
+            }
+          }
+        )
+
+      case .sessionStarted(let conversationID, let sessionID):
+        guard var conversation = state.conversations[id: conversationID] else { return .none }
+        conversation.orchestratorSessionID = sessionID
+        state.conversations[id: conversationID] = conversation
         return persist(conversation)
+
+      case .sendUserMessage(let conversationID, let content):
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .none }
+        let message = OrchestratorMessage(id: uuid(), role: .user, content: trimmed, timestamp: date.now)
+        return .merge(
+          .send(.appendMessage(conversationID: conversationID, message: message)),
+          .run { _ in
+            try? await orchestratorClient.sendUserMessage(conversationID, trimmed)
+          }
+        )
+
+      case .orchestratorEvent(let event):
+        return handle(event: event, state: &state)
 
       case .selectConversation(let id):
         state.selectedConversationID = id
@@ -69,6 +126,7 @@ struct ConversationFeature {
           state.selectedConversationID = nil
         }
         return .run { _ in
+          try? await orchestratorClient.killSession(id)
           try? conversationStore.delete(id)
         }
 
@@ -106,6 +164,53 @@ struct ConversationFeature {
         state.conversations[id: conversationID] = conversation
         return persist(conversation)
       }
+    }
+  }
+
+  private func handle(event: OrchestratorEvent, state: inout State) -> Effect<Action> {
+    switch event {
+    case .assistantDelta(let conversationID, let text):
+      guard var conversation = state.conversations[id: conversationID] else { return .none }
+      // Append to last assistant message in this turn, or start a new one.
+      if let last = conversation.orchestratorMessages.last, last.role == .assistant {
+        let updated = OrchestratorMessage(
+          id: last.id,
+          role: .assistant,
+          content: last.content + text,
+          timestamp: last.timestamp
+        )
+        conversation.orchestratorMessages[conversation.orchestratorMessages.count - 1] = updated
+      } else {
+        conversation.orchestratorMessages.append(
+          OrchestratorMessage(id: uuid(), role: .assistant, content: text, timestamp: date.now)
+        )
+      }
+      state.conversations[id: conversationID] = conversation
+      return persist(conversation)
+
+    case .toolUse(let conversationID, let tool, let id, let inputJSON):
+      let payload = #"{"tool":"\#(tool)","id":"\#(id)","input":\#(inputJSON)}"#
+      let message = OrchestratorMessage(id: uuid(), role: .toolUse, content: payload, timestamp: date.now)
+      return .send(.appendMessage(conversationID: conversationID, message: message))
+
+    case .toolResult(let conversationID, let toolUseID, let resultJSON):
+      let payload = #"{"tool_use_id":"\#(toolUseID)","result":\#(resultJSON.isEmpty ? "\"\"" : "\"\(resultJSON.replacingOccurrences(of: "\"", with: "\\\""))\"")}"#
+      let message = OrchestratorMessage(id: uuid(), role: .toolResult, content: payload, timestamp: date.now)
+      return .send(.appendMessage(conversationID: conversationID, message: message))
+
+    case .turnComplete(let conversationID, let sessionID):
+      guard let sessionID, var conversation = state.conversations[id: conversationID] else { return .none }
+      if conversation.orchestratorSessionID != sessionID {
+        conversation.orchestratorSessionID = sessionID
+        state.conversations[id: conversationID] = conversation
+        return persist(conversation)
+      }
+      return .none
+
+    case .error(let conversationID, let message):
+      guard let conversationID else { return .none }
+      let msg = OrchestratorMessage(id: uuid(), role: .system, content: "[error] \(message)", timestamp: date.now)
+      return .send(.appendMessage(conversationID: conversationID, message: msg))
     }
   }
 

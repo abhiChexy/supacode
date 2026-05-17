@@ -166,6 +166,19 @@ struct SupacodeApp: App {
     appDelegate.appStore = appStore
     appDelegate.terminalManager = terminalManager
     Self.configureSocketHandlers(terminalManager: terminalManager, store: appStore)
+    Self.bootstrapOrchestrator(store: appStore)
+  }
+
+  @MainActor
+  private static func bootstrapOrchestrator(store: StoreOf<AppFeature>) {
+    let runtime = OrchestratorRuntime.shared
+    let bridge = OrchestratorBridgeServer(sharedToken: UUID().uuidString)
+    OrchestratorBridgeHandlers.register(on: bridge, store: store)
+    do {
+      try runtime.bootstrap(bridgeServer: bridge)
+    } catch {
+      SupaLogger("OrchestratorRuntime").error("Bootstrap failed: \(error). Orchestrator features will be inert this session.")
+    }
   }
 
   @MainActor
