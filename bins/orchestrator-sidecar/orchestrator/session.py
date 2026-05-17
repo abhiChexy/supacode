@@ -104,17 +104,32 @@ class OrchestratorSession:
             traceback.print_exc()
             self._client = None
             return None
-        # Probe for the active model + cwd immediately so the UI's
-        # composer pills don't sit on placeholder values until the first
-        # turn lands a SystemMessage.init.
+        # Probe for the model catalog so the UI's composer pills don't
+        # sit on placeholder values until the first turn lands a
+        # SystemMessage.init with the real active model. get_server_info
+        # returns the catalog (default / sonnet / haiku) plus account info
+        # but NOT the currently-active model — that only surfaces during
+        # the first turn.
         try:
-            info = self._client.get_server_info()
+            info = await self._client.get_server_info()
             if info:
+                models = info.get("models") or []
+                default_model = models[0] if models else None
+                # Synthesize a label like "Opus 4.7 (default)" from the
+                # default catalog entry's description ("Opus 4.7 with 1M
+                # context · Most capable…"). Falls back to displayName.
+                label = None
+                if default_model:
+                    desc = default_model.get("description", "")
+                    label = desc.split(" with ")[0].split(" ·")[0].strip() or default_model.get("displayName")
                 self._initial_server_info = {
-                    "model": info.get("model"),
-                    "cwd": info.get("cwd") or os.path.expanduser("~"),
-                    "permission_mode": info.get("permissionMode"),
-                    "session_id": info.get("session_id"),
+                    "model": label,
+                    "cwd": os.path.expanduser("~"),
+                    "permission_mode": "acceptEdits",
+                    "available_models": [
+                        {"value": m.get("value"), "label": m.get("displayName")}
+                        for m in models
+                    ],
                 }
         except Exception as exc:
             print(f"[session] get_server_info failed: {exc}", flush=True)

@@ -67,18 +67,19 @@ struct OrchestratorChatView: View {
       Text(conversation.title.isEmpty ? "Untitled" : conversation.title)
         .font(.system(size: 13, weight: .semibold))
       Spacer()
-      if let sessionID = conversation.orchestratorSessionID {
-        Text("session \(sessionID.prefix(8))…")
-          .font(Theme.Font.monoTiny)
-          .foregroundStyle(Theme.Color.textTertiary)
-      } else {
-        Text("no session")
-          .font(Theme.Font.monoTiny)
-          .foregroundStyle(Theme.Color.textTertiary)
-      }
+      Text(sessionStatusLabel)
+        .font(Theme.Font.monoTiny)
+        .foregroundStyle(Theme.Color.textTertiary)
     }
     .padding(.horizontal, Theme.Spacing.l)
     .padding(.vertical, Theme.Spacing.m)
+  }
+
+  private var sessionStatusLabel: String {
+    if let sessionID = conversation.orchestratorSessionID {
+      return isInFlight ? "running · \(sessionID.prefix(8))" : "session \(sessionID.prefix(8))"
+    }
+    return isInFlight ? "starting…" : "ready"
   }
 
   // MARK: Messages
