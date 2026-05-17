@@ -116,7 +116,13 @@ async def interrupt_session(request: web.Request) -> web.Response:
     try:
         await session.interrupt()
     except Exception as exc:
-        return web.Response(status=500, text=str(exc))
+        print(f"[interrupt] failed: {exc}", flush=True)
+    # Always broadcast turn_complete so the UI unsticks even if the SDK
+    # interrupt doesn't actually terminate the pending operation.
+    await _broadcast({
+        "type": "turn_complete",
+        "conversation_id": cid,
+    })
     return web.Response(status=204)
 
 

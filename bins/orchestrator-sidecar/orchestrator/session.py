@@ -72,11 +72,11 @@ class OrchestratorSession:
             resume=self._resume_session_id,
             permission_mode="acceptEdits",
             cwd=os.path.expanduser("~"),
-            # Ignore the user's personal ~/.claude config — its skills /
-            # hooks / superpowers are tuned for their dev workflow and turn
-            # the orchestrator into a heavy-context dev agent. We want a
-            # lightweight coordinator persona.
-            setting_sources=None,
+            # Load the user's ~/.claude settings so MCP servers (Datadog,
+            # Linear, chexy, etc.) and configured agents are available.
+            # We trim noise via disallowed_tools below — Skill / Task are
+            # the ones that pull in heavy context bloat, not MCP servers.
+            setting_sources=["user"],
             # Disabled tools:
             # - AskUserQuestion: interactive Claude Code tool that doesn't
             #   round-trip cleanly over our pipe.
