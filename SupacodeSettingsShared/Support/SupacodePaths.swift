@@ -89,6 +89,17 @@ public nonisolated enum SupacodePaths {
     baseDirectory.appending(path: "sidebar.json", directoryHint: .notDirectory)
   }
 
+  public static var conversationsDirectory: URL {
+    baseDirectory.appending(path: "conversations", directoryHint: .isDirectory)
+  }
+
+  public static func conversationURL(for id: UUID) -> URL {
+    conversationsDirectory.appending(
+      path: "\(id.uuidString).json",
+      directoryHint: .notDirectory
+    )
+  }
+
   public static func repositorySettingsURL(for rootURL: URL) -> URL {
     rootURL.standardizedFileURL.appending(path: "supacode.json", directoryHint: .notDirectory)
   }

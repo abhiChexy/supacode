@@ -23,6 +23,7 @@ struct AppFeature {
     var settings: SettingsFeature.State
     var updates = UpdatesFeature.State()
     var commandPalette = CommandPaletteFeature.State()
+    var conversations = ConversationFeature.State()
     var openActionSelection: OpenWorktreeAction = .finder
     var repoScripts: [ScriptDefinition] = []
     var globalScripts: [ScriptDefinition] = []
@@ -82,6 +83,7 @@ struct AppFeature {
 
   enum Action {
     case agentPresence(AgentPresenceFeature.Action)
+    case conversations(ConversationFeature.Action)
     case appLaunched
     case scenePhaseChanged(ScenePhase)
     case repositories(RepositoriesFeature.Action)
@@ -140,6 +142,7 @@ struct AppFeature {
         return .merge(
           .send(.repositories(.task)),
           .send(.settings(.task)),
+          .send(.conversations(.onAppear)),
           .run { _ in
             await MainActor.run {
               NSApplication.shared.dockTile.badgeLabel = nil
@@ -986,6 +989,9 @@ struct AppFeature {
     }
     Scope(state: \.commandPalette, action: \.commandPalette) {
       CommandPaletteFeature()
+    }
+    Scope(state: \.conversations, action: \.conversations) {
+      ConversationFeature()
     }
     .ifLet(\.$deeplinkInputConfirmation, action: \.deeplinkInputConfirmation) {
       DeeplinkInputConfirmationFeature()
