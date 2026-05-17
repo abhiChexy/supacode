@@ -100,6 +100,17 @@ enum OrchestratorBridgeHandlers {
           .createTabWithInput(worktree, input: command, runSetupScriptIfNew: true)
         )
       }
+      // Link the workspace to the conversation that asked for it so the
+      // right pane fills with a workspace card immediately.
+      if let cidString = body["conversation_id"] as? String,
+        let cid = UUID(uuidString: cidString)
+      {
+        store.send(
+          .conversations(
+            .assignWorkspace(workspaceID: worktree.id, conversationID: cid)
+          )
+        )
+      }
       return [
         "workspace_id": worktree.id,
         "repo": repo.name,

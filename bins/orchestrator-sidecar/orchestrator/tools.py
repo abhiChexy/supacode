@@ -12,8 +12,13 @@ from typing import Any
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
 
-def build_orchestrator_mcp(bridge):  # noqa: ANN001 — bridge is a SupacodeBridge
-    """Returns an SdkMcpServerConfig with all six orchestrator tools."""
+def build_orchestrator_mcp(bridge, conversation_id: str):  # noqa: ANN001 — bridge is a SupacodeBridge
+    """Returns an SdkMcpServerConfig with all six orchestrator tools.
+
+    `conversation_id` is stamped onto every bridge call so Supacode can
+    link the resulting workspace back to the conversation that asked
+    for it.
+    """
 
     @tool(
         "create_workspace",
@@ -52,6 +57,7 @@ def build_orchestrator_mcp(bridge):  # noqa: ANN001 — bridge is a SupacodeBrid
         result = await bridge.post(
             "/commands/create_workspace",
             {
+                "conversation_id": conversation_id,
                 "repo_path": args["repo_path"],
                 "branch_name": args["branch_name"],
                 "initial_task": args["initial_task"],
@@ -79,7 +85,11 @@ def build_orchestrator_mcp(bridge):  # noqa: ANN001 — bridge is a SupacodeBrid
     async def send_to_workspace(args: dict[str, Any]) -> dict[str, Any]:
         result = await bridge.post(
             "/commands/send_to_workspace",
-            {"workspace_id": args["workspace_id"], "text": args["message"] + "\n"},
+            {
+                "conversation_id": conversation_id,
+                "workspace_id": args["workspace_id"],
+                "text": args["message"] + "\n",
+            },
         )
         return _text(result or {"ok": True})
 
@@ -103,6 +113,7 @@ def build_orchestrator_mcp(bridge):  # noqa: ANN001 — bridge is a SupacodeBrid
         result = await bridge.post(
             "/commands/peek_workspace",
             {
+                "conversation_id": conversation_id,
                 "workspace_id": args["workspace_id"],
                 "max_lines": args.get("max_lines", 200),
             },
@@ -115,7 +126,10 @@ def build_orchestrator_mcp(bridge):  # noqa: ANN001 — bridge is a SupacodeBrid
         {"type": "object", "properties": {}},
     )
     async def list_workspaces(args: dict[str, Any]) -> dict[str, Any]:
-        result = await bridge.post("/commands/list_workspaces", {})
+        result = await bridge.post(
+            "/commands/list_workspaces",
+            {"conversation_id": conversation_id},
+        )
         return _text(result)
 
     @tool(
@@ -143,7 +157,10 @@ def build_orchestrator_mcp(bridge):  # noqa: ANN001 — bridge is a SupacodeBrid
     async def cleanup_workspace(args: dict[str, Any]) -> dict[str, Any]:
         await bridge.post(
             "/commands/cleanup_workspace",
-            {"workspace_id": args["workspace_id"]},
+            {
+                "conversation_id": conversation_id,
+                "workspace_id": args["workspace_id"],
+            },
         )
         return _text({"ok": True})
 

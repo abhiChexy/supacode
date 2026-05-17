@@ -87,7 +87,7 @@ class OrchestratorSession:
         # Register our orchestrator MCP server so the agent has real
         # create_workspace / send_to_workspace / peek_workspace tools that
         # call back through the Supacode bridge.
-        orchestrator_mcp = build_orchestrator_mcp(self._bridge)
+        orchestrator_mcp = build_orchestrator_mcp(self._bridge, self.conversation_id)
         options = ClaudeAgentOptions(
             system_prompt=self._system_prompt,
             resume=self._resume_session_id,

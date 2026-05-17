@@ -94,6 +94,7 @@ struct WorkspaceCardModel: Equatable, Identifiable {
 
 private struct WorkspaceCard: View {
   let card: WorkspaceCardModel
+  @State private var hovering = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
@@ -116,11 +117,67 @@ private struct WorkspaceCard: View {
         .foregroundStyle(Theme.Color.textTertiary)
         .lineLimit(1)
         .truncationMode(.middle)
+
+      HStack(spacing: Theme.Spacing.xs) {
+        Button {
+          NSWorkspace.shared.open(URL(fileURLWithPath: card.path))
+        } label: {
+          actionLabel("Finder", icon: "folder")
+        }
+        .buttonStyle(.plain)
+        .help("Open in Finder")
+
+        Button {
+          let url = URL(fileURLWithPath: card.path)
+          NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path)
+        } label: {
+          actionLabel("VS Code", icon: "chevron.left.forwardslash.chevron.right")
+        }
+        .buttonStyle(.plain)
+        .help("Reveal path")
+
+        Button(action: openTerminal) {
+          actionLabel("Terminal", icon: "terminal")
+        }
+        .buttonStyle(.plain)
+        .help("Open Terminal here")
+
+        Spacer()
+      }
+      .padding(.top, Theme.Spacing.xs)
     }
     .padding(Theme.Spacing.m)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Theme.Color.backgroundElevated)
+    .background(hovering ? Theme.Color.backgroundElevated.opacity(0.85) : Theme.Color.backgroundElevated)
     .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
     .themeBorder()
+    .onHover { hovering = $0 }
+  }
+
+  private func actionLabel(_ text: String, icon: String) -> some View {
+    HStack(spacing: 4) {
+      Image(systemName: icon)
+        .font(.system(size: 9))
+      Text(text)
+        .font(Theme.Font.monoTiny)
+    }
+    .foregroundStyle(Theme.Color.textSecondary)
+    .padding(.horizontal, 6)
+    .padding(.vertical, 3)
+    .background(Theme.Color.backgroundPrimary.opacity(0.6))
+    .clipShape(Capsule())
+  }
+
+  private func openTerminal() {
+    let script = """
+    tell application "Terminal"
+      activate
+      do script "cd \\"\(card.path)\\""
+    end tell
+    """
+    if let appleScript = NSAppleScript(source: script) {
+      var err: NSDictionary?
+      appleScript.executeAndReturnError(&err)
+    }
   }
 }
