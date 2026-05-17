@@ -127,6 +127,33 @@ nonisolated final class OrchestratorRuntime: @unchecked Sendable {
     )
   }
 
+  func spawnWorkspace(
+    conversationID: UUID,
+    workspaceID: String,
+    cwd: String,
+    initialTask: String
+  ) async throws {
+    _ = try await postJSON(
+      path: "/sessions/\(conversationID.uuidString)/workspaces",
+      body: [
+        "workspace_id": workspaceID,
+        "cwd": cwd,
+        "initial_task": initialTask,
+      ]
+    )
+  }
+
+  func messageWorkspace(
+    conversationID: UUID,
+    workspaceID: String,
+    content: String
+  ) async throws {
+    _ = try await postJSON(
+      path: "/sessions/\(conversationID.uuidString)/workspaces/\(workspaceID)/messages",
+      body: ["content": content]
+    )
+  }
+
   // MARK: - Sidecar lifecycle
 
   private func spawnSidecar(bridgePort: UInt16, sharedToken: String) throws {
@@ -304,18 +331,20 @@ nonisolated final class OrchestratorRuntime: @unchecked Sendable {
       let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     else { return }
     let cid = (dict["conversation_id"] as? String).flatMap(UUID.init(uuidString:))
+    let workspaceID = dict["workspace_id"] as? String
     let type = dict["type"] as? String ?? ""
     let event: OrchestratorEvent
     switch type {
     case "assistant_delta":
       guard let cid else { return }
-      event = .assistantDelta(conversationID: cid, text: dict["text"] as? String ?? "")
+      event = .assistantDelta(conversationID: cid, workspaceID: workspaceID, text: dict["text"] as? String ?? "")
     case "tool_use":
       guard let cid else { return }
       let inputJSON = (try? JSONSerialization.data(withJSONObject: dict["input"] ?? [:]))
         .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
       event = .toolUse(
         conversationID: cid,
+        workspaceID: workspaceID,
         tool: dict["tool"] as? String ?? "",
         id: dict["id"] as? String ?? "",
         inputJSON: inputJSON
@@ -324,12 +353,13 @@ nonisolated final class OrchestratorRuntime: @unchecked Sendable {
       guard let cid else { return }
       event = .toolResult(
         conversationID: cid,
+        workspaceID: workspaceID,
         toolUseID: dict["tool_use_id"] as? String ?? "",
         resultJSON: dict["result"] as? String ?? ""
       )
-    case "turn_complete":
+    case "turn_complete", "workspace_turn_complete":
       guard let cid else { return }
-      event = .turnComplete(conversationID: cid, sessionID: dict["session_id"] as? String)
+      event = .turnComplete(conversationID: cid, workspaceID: workspaceID, sessionID: dict["session_id"] as? String)
     case "session_info":
       guard let cid else { return }
       event = .sessionInfo(
@@ -360,7 +390,7 @@ nonisolated final class OrchestratorRuntime: @unchecked Sendable {
         overageResetsAt: overageResetsAt
       )
     case "error":
-      event = .error(conversationID: cid, message: dict["message"] as? String ?? "unknown")
+      event = .error(conversationID: cid, workspaceID: workspaceID, message: dict["message"] as? String ?? "unknown")
     default:
       return
     }

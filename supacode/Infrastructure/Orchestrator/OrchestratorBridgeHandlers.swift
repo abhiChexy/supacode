@@ -89,19 +89,23 @@ enum OrchestratorBridgeHandlers {
       }
       // Open a terminal tab inside the new worktree running Claude Code.
       let trimmedTask = initialTask.trimmingCharacters(in: .whitespacesAndNewlines)
-      if trimmedTask.isEmpty {
-        terminalManager.handleCommand(
-          .ensureInitialTab(worktree, runSetupScriptIfNew: true, focusing: false)
-        )
-      } else {
-        // --dangerously-skip-permissions so the child agent doesn't
-        // stop at every Edit/Write/Bash prompt — we have no UI to
-        // approve from inside the orchestrator surface.
-        let escaped = trimmedTask.replacingOccurrences(of: "'", with: "'\\''")
-        let command = "claude --dangerously-skip-permissions '\(escaped)'\n"
-        terminalManager.handleCommand(
-          .createTabWithInput(worktree, input: command, runSetupScriptIfNew: true)
-        )
+      // Spawn a plain bash tab — the user can still drop into the
+      // worktree shell if they need to inspect or run commands manually.
+      terminalManager.handleCommand(
+        .ensureInitialTab(worktree, runSetupScriptIfNew: true, focusing: false)
+      )
+      // The child agent runs as a sidecar SDK session, NOT as `claude`
+      // in the terminal. Its events stream into the orchestrator chat
+      // alongside the parent's.
+      if let cidString = body["conversation_id"] as? String,
+        let cid = UUID(uuidString: cidString)
+      {
+        @Dependency(OrchestratorClientKey.self) var orchestrator
+        let workingDirectory = worktree.workingDirectory.path(percentEncoded: false)
+        let workspaceID = worktree.id
+        Task {
+          try? await orchestrator.spawnWorkspace(cid, workspaceID, workingDirectory, trimmedTask)
+        }
       }
       // Link the workspace to the conversation that asked for it so the
       // right pane fills with a workspace card immediately.
@@ -125,21 +129,15 @@ enum OrchestratorBridgeHandlers {
     server.register(path: "/commands/send_to_workspace") { body in
       let workspaceID = (body["workspace_id"] as? String) ?? ""
       let text = (body["text"] as? String) ?? ""
-      guard let worktree = findWorktree(in: store, id: workspaceID) else {
-        return ["error": "workspace not found: \(workspaceID)"]
+      let trimmed = text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+      guard !trimmed.isEmpty else { return nil }
+      guard let cidString = body["conversation_id"] as? String,
+        let cid = UUID(uuidString: cidString)
+      else { return ["error": "missing conversation_id"] }
+      @Dependency(OrchestratorClientKey.self) var orchestrator
+      Task {
+        try? await orchestrator.messageWorkspace(cid, workspaceID, trimmed)
       }
-      guard let tabID = terminalManager.stateIfExists(for: worktree.id)?.tabManager.selectedTabId else {
-        return ["error": "no active tab for workspace"]
-      }
-      terminalManager.handleCommand(
-        .selectTab(worktree, tabID: tabID)
-      )
-      // TerminalClient.focusSurface accepts an `input: String?` parameter.
-      // We don't know the surface ID here without scrollback access; the
-      // simplest reliable path is to spawn a fresh tab carrying the input.
-      terminalManager.handleCommand(
-        .createTabWithInput(worktree, input: text, runSetupScriptIfNew: false)
-      )
       return nil
     }
 

@@ -229,6 +229,8 @@ struct OrchestratorChatView: View {
   }
 
   /// Group tool_use + matching tool_result into a single visual row.
+  /// Adds workspace_id to each row so the renderer can indent child
+  /// activity under a workspace header.
   private var messageRows: [MessageRow] {
     let messages = conversation.orchestratorMessages
     var rows: [MessageRow] = []
@@ -238,7 +240,15 @@ struct OrchestratorChatView: View {
         resultsByID[id] = m
       }
     }
+    var lastWorkspaceHeader: String? = nil
     for m in messages {
+      // Insert a workspace header when entering / leaving a child stream.
+      if m.workspaceID != lastWorkspaceHeader {
+        if let ws = m.workspaceID {
+          rows.append(MessageRow(id: UUID(), kind: .workspaceHeader(workspaceID: ws)))
+        }
+        lastWorkspaceHeader = m.workspaceID
+      }
       switch m.role {
       case .toolResult:
         continue
@@ -257,16 +267,20 @@ struct OrchestratorChatView: View {
   private func messageRow(_ row: MessageRow) -> some View {
     switch row.kind {
     case .text(let message):
-      switch message.role {
-      case .user:
-        UserBubble(text: message.content)
-      case .assistant:
-        AssistantBubble(text: message.content)
-      case .system:
-        SystemNote(text: message.content)
-      case .toolUse, .toolResult:
-        EmptyView()
+      let indent: CGFloat = message.workspaceID != nil ? Theme.Spacing.l : 0
+      Group {
+        switch message.role {
+        case .user:
+          UserBubble(text: message.content)
+        case .assistant:
+          AssistantBubble(text: message.content)
+        case .system:
+          SystemNote(text: message.content)
+        case .toolUse, .toolResult:
+          EmptyView()
+        }
       }
+      .padding(.leading, indent)
     case .toolCall(let use, let result):
       ToolCallCard(
         use: use,
@@ -276,6 +290,20 @@ struct OrchestratorChatView: View {
           store.send(.sendUserMessage(conversationID: conversation.id, content: answer))
         }
       )
+      .padding(.leading, use.workspaceID != nil ? Theme.Spacing.l : 0)
+    case .workspaceHeader(let wsID):
+      HStack(spacing: Theme.Spacing.s) {
+        Image(systemName: "arrow.triangle.branch")
+          .font(.system(size: 10))
+          .foregroundStyle(Theme.Color.accent)
+        Text("workspace \(wsID.prefix(12))…")
+          .font(Theme.Font.monoTiny)
+          .foregroundStyle(Theme.Color.textSecondary)
+        Rectangle()
+          .fill(Theme.Color.borderSubtle)
+          .frame(height: 1)
+      }
+      .padding(.top, Theme.Spacing.s)
     }
   }
 
@@ -802,6 +830,7 @@ private struct MessageRow: Identifiable {
   enum Kind {
     case text(OrchestratorMessage)
     case toolCall(use: OrchestratorMessage, result: OrchestratorMessage?)
+    case workspaceHeader(workspaceID: String)
   }
 }
 

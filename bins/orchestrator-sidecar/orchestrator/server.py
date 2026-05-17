@@ -10,10 +10,14 @@ from typing import Any
 from aiohttp import WSMsgType, web
 
 from .session import OrchestratorSession
+from .workspace import WorkspaceSession
 
 
 _SESSIONS: dict[str, OrchestratorSession] = {}
 _PUMP_TASKS: dict[str, asyncio.Task] = {}
+# Keyed by (parent_conversation_id, workspace_id).
+_WORKSPACES: dict[tuple[str, str], WorkspaceSession] = {}
+_WORKSPACE_PUMPS: dict[tuple[str, str], asyncio.Task] = {}
 _WS_CLIENTS: set[web.WebSocketResponse] = set()
 
 
@@ -149,6 +153,81 @@ async def interrupt_session(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
+async def spawn_workspace(request: web.Request) -> web.Response:
+    if not _check_auth(request):
+        return web.Response(status=401)
+    cid = request.match_info["conversation_id"]
+    body = await request.json()
+    workspace_id = body["workspace_id"]
+    cwd = body["cwd"]
+    initial_task = body.get("initial_task", "")
+    key = (cid, workspace_id)
+    if key in _WORKSPACES:
+        return web.json_response({"status": "exists"})
+    session = WorkspaceSession(
+        parent_conversation_id=cid,
+        workspace_id=workspace_id,
+        cwd=cwd,
+    )
+    await session.start()
+    _WORKSPACES[key] = session
+    if initial_task:
+        await _send_to_workspace(request.app, cid, workspace_id, initial_task)
+    return web.json_response({"status": "ok"})
+
+
+async def message_workspace(request: web.Request) -> web.Response:
+    if not _check_auth(request):
+        return web.Response(status=401)
+    cid = request.match_info["conversation_id"]
+    ws_id = request.match_info["workspace_id"]
+    body = await request.json()
+    content = body.get("content", "")
+    await _send_to_workspace(request.app, cid, ws_id, content)
+    return web.Response(status=202)
+
+
+async def _send_to_workspace(app: web.Application, cid: str, ws_id: str, content: str) -> None:
+    key = (cid, ws_id)
+    session = _WORKSPACES.get(key)
+    if session is None:
+        return
+    if prior := _WORKSPACE_PUMPS.pop(key, None):
+        prior.cancel()
+
+    async def pump() -> None:
+        try:
+            async for event in session.send_message(content):
+                await _broadcast(event)
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            print(f"[workspace pump] {key} failed: {exc}", flush=True)
+        finally:
+            await _broadcast({
+                "type": "workspace_turn_complete",
+                "conversation_id": cid,
+                "workspace_id": ws_id,
+            })
+            _WORKSPACE_PUMPS.pop(key, None)
+
+    task = app.loop.create_task(pump())
+    _WORKSPACE_PUMPS[key] = task
+
+
+async def delete_workspace(request: web.Request) -> web.Response:
+    if not _check_auth(request):
+        return web.Response(status=401)
+    cid = request.match_info["conversation_id"]
+    ws_id = request.match_info["workspace_id"]
+    key = (cid, ws_id)
+    if task := _WORKSPACE_PUMPS.pop(key, None):
+        task.cancel()
+    if session := _WORKSPACES.pop(key, None):
+        await session.close()
+    return web.Response(status=204)
+
+
 async def session_inspect(request: web.Request) -> web.Response:
     if not _check_auth(request):
         return web.Response(status=401)
@@ -203,6 +282,9 @@ async def run_server(*, supacode_port: int, bind_port: int, shared_token: str, p
         web.post("/sessions/{conversation_id}/interrupt", interrupt_session),
         web.post("/sessions/{conversation_id}/model", set_model),
         web.get("/sessions/{conversation_id}/inspect", session_inspect),
+        web.post("/sessions/{conversation_id}/workspaces", spawn_workspace),
+        web.post("/sessions/{conversation_id}/workspaces/{workspace_id}/messages", message_workspace),
+        web.delete("/sessions/{conversation_id}/workspaces/{workspace_id}", delete_workspace),
         web.delete("/sessions/{conversation_id}", delete_session),
         web.get("/stream", stream),
     ])

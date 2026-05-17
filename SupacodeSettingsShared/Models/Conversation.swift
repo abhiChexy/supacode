@@ -55,6 +55,8 @@ public nonisolated struct OrchestratorMessage: Identifiable, Codable, Equatable,
   /// Raw text. Tool messages (`toolUse`, `toolResult`) carry JSON-encoded payloads.
   public let content: String
   public let timestamp: Date
+  /// When non-nil, originated from a child workspace agent in this worktree.
+  public let workspaceID: String?
 
   public enum Role: String, Codable, Sendable {
     case user
@@ -64,10 +66,30 @@ public nonisolated struct OrchestratorMessage: Identifiable, Codable, Equatable,
     case system
   }
 
-  public init(id: UUID = UUID(), role: Role, content: String, timestamp: Date = Date()) {
+  public init(
+    id: UUID = UUID(),
+    role: Role,
+    content: String,
+    timestamp: Date = Date(),
+    workspaceID: String? = nil
+  ) {
     self.id = id
     self.role = role
     self.content = content
     self.timestamp = timestamp
+    self.workspaceID = workspaceID
+  }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: MsgCodingKeys.self)
+    self.id = try c.decode(UUID.self, forKey: .id)
+    self.role = try c.decode(Role.self, forKey: .role)
+    self.content = try c.decode(String.self, forKey: .content)
+    self.timestamp = try c.decode(Date.self, forKey: .timestamp)
+    self.workspaceID = try c.decodeIfPresent(String.self, forKey: .workspaceID)
+  }
+
+  private enum MsgCodingKeys: String, CodingKey {
+    case id, role, content, timestamp, workspaceID
   }
 }

@@ -247,49 +247,53 @@ struct ConversationFeature {
 
   private func handle(event: OrchestratorEvent, state: inout State) -> Effect<Action> {
     switch event {
-    case .assistantDelta(let conversationID, let text):
+    case .assistantDelta(let conversationID, let workspaceID, let text):
       guard var conversation = state.conversations[id: conversationID] else { return .none }
-      // Append to last assistant message in this turn, or start a new one.
-      if let last = conversation.orchestratorMessages.last, last.role == .assistant {
+      if let last = conversation.orchestratorMessages.last,
+        last.role == .assistant, last.workspaceID == workspaceID
+      {
         let updated = OrchestratorMessage(
-          id: last.id,
-          role: .assistant,
-          content: last.content + text,
-          timestamp: last.timestamp
+          id: last.id, role: .assistant, content: last.content + text,
+          timestamp: last.timestamp, workspaceID: workspaceID
         )
         conversation.orchestratorMessages[conversation.orchestratorMessages.count - 1] = updated
       } else {
         conversation.orchestratorMessages.append(
-          OrchestratorMessage(id: uuid(), role: .assistant, content: text, timestamp: date.now)
+          OrchestratorMessage(id: uuid(), role: .assistant, content: text, timestamp: date.now, workspaceID: workspaceID)
         )
       }
       state.conversations[id: conversationID] = conversation
       return persist(conversation)
 
-    case .toolUse(let conversationID, let tool, let id, let inputJSON):
+    case .toolUse(let conversationID, let workspaceID, let tool, let id, let inputJSON):
       let payload = #"{"tool":"\#(tool)","id":"\#(id)","input":\#(inputJSON)}"#
-      let message = OrchestratorMessage(id: uuid(), role: .toolUse, content: payload, timestamp: date.now)
+      let message = OrchestratorMessage(id: uuid(), role: .toolUse, content: payload, timestamp: date.now, workspaceID: workspaceID)
       return .send(.appendMessage(conversationID: conversationID, message: message))
 
-    case .toolResult(let conversationID, let toolUseID, let resultJSON):
+    case .toolResult(let conversationID, let workspaceID, let toolUseID, let resultJSON):
       let payload = #"{"tool_use_id":"\#(toolUseID)","result":\#(resultJSON.isEmpty ? "\"\"" : "\"\(resultJSON.replacingOccurrences(of: "\"", with: "\\\""))\"")}"#
-      let message = OrchestratorMessage(id: uuid(), role: .toolResult, content: payload, timestamp: date.now)
+      let message = OrchestratorMessage(id: uuid(), role: .toolResult, content: payload, timestamp: date.now, workspaceID: workspaceID)
       return .send(.appendMessage(conversationID: conversationID, message: message))
 
-    case .turnComplete(let conversationID, let sessionID):
-      state.inFlightConversationIDs.remove(conversationID)
+    case .turnComplete(let conversationID, let workspaceID, let sessionID):
+      // workspace_turn_complete events shouldn't clear the parent inFlight flag.
+      if workspaceID == nil {
+        state.inFlightConversationIDs.remove(conversationID)
+      }
       guard var conversation = state.conversations[id: conversationID] else { return .none }
-      if let sessionID, conversation.orchestratorSessionID != sessionID {
+      if workspaceID == nil, let sessionID, conversation.orchestratorSessionID != sessionID {
         conversation.orchestratorSessionID = sessionID
         state.conversations[id: conversationID] = conversation
         return persist(conversation)
       }
       return .none
 
-    case .error(let conversationID, let message):
+    case .error(let conversationID, let workspaceID, let message):
       guard let conversationID else { return .none }
-      state.inFlightConversationIDs.remove(conversationID)
-      let msg = OrchestratorMessage(id: uuid(), role: .system, content: "[error] \(message)", timestamp: date.now)
+      if workspaceID == nil {
+        state.inFlightConversationIDs.remove(conversationID)
+      }
+      let msg = OrchestratorMessage(id: uuid(), role: .system, content: "[error] \(message)", timestamp: date.now, workspaceID: workspaceID)
       return .send(.appendMessage(conversationID: conversationID, message: msg))
 
     case .sessionInfo(let conversationID, let model, _, let cwd):

@@ -12,6 +12,8 @@ nonisolated struct OrchestratorClient: Sendable {
   var interruptSession: @Sendable (_ conversationID: UUID) async throws -> Void
   var setModel: @Sendable (_ conversationID: UUID, _ model: String) async throws -> Void
   var inspectSession: @Sendable (_ conversationID: UUID) async throws -> SessionInspection
+  var spawnWorkspace: @Sendable (_ conversationID: UUID, _ workspaceID: String, _ cwd: String, _ initialTask: String) async throws -> Void
+  var messageWorkspace: @Sendable (_ conversationID: UUID, _ workspaceID: String, _ content: String) async throws -> Void
   var events: @Sendable () -> AsyncStream<OrchestratorEvent>
   var isReady: @Sendable () -> Bool
 
@@ -41,6 +43,21 @@ nonisolated struct OrchestratorClient: Sendable {
       let raw = try await OrchestratorRuntime.shared.inspectSession(conversationID: conversationID) ?? [:]
       return SessionInspection(raw: raw)
     },
+    spawnWorkspace: { conversationID, workspaceID, cwd, initialTask in
+      try await OrchestratorRuntime.shared.spawnWorkspace(
+        conversationID: conversationID,
+        workspaceID: workspaceID,
+        cwd: cwd,
+        initialTask: initialTask
+      )
+    },
+    messageWorkspace: { conversationID, workspaceID, content in
+      try await OrchestratorRuntime.shared.messageWorkspace(
+        conversationID: conversationID,
+        workspaceID: workspaceID,
+        content: content
+      )
+    },
     events: { OrchestratorRuntime.shared.events() },
     isReady: { OrchestratorRuntime.shared.isReady }
   )
@@ -52,6 +69,8 @@ nonisolated struct OrchestratorClient: Sendable {
     interruptSession: { _ in },
     setModel: { _, _ in },
     inspectSession: { _ in .init(raw: [:]) },
+    spawnWorkspace: { _, _, _, _ in },
+    messageWorkspace: { _, _, _ in },
     events: { AsyncStream { $0.finish() } },
     isReady: { false }
   )
@@ -87,14 +106,14 @@ nonisolated struct MCPServerStatus: Identifiable, Sendable {
 }
 
 nonisolated enum OrchestratorEvent: Equatable, Sendable {
-  case assistantDelta(conversationID: UUID, text: String)
-  case toolUse(conversationID: UUID, tool: String, id: String, inputJSON: String)
-  case toolResult(conversationID: UUID, toolUseID: String, resultJSON: String)
-  case turnComplete(conversationID: UUID, sessionID: String?)
+  case assistantDelta(conversationID: UUID, workspaceID: String?, text: String)
+  case toolUse(conversationID: UUID, workspaceID: String?, tool: String, id: String, inputJSON: String)
+  case toolResult(conversationID: UUID, workspaceID: String?, toolUseID: String, resultJSON: String)
+  case turnComplete(conversationID: UUID, workspaceID: String?, sessionID: String?)
   case sessionInfo(conversationID: UUID, model: String?, permissionMode: String?, cwd: String?)
   case usage(conversationID: UUID, inputTokens: Int, outputTokens: Int, cacheReadTokens: Int, cacheCreationTokens: Int, costUSD: Double?)
   case rateLimit(window: String?, status: String?, utilization: Double?, resetsAt: Date?, overageStatus: String?, overageResetsAt: Date?)
-  case error(conversationID: UUID?, message: String)
+  case error(conversationID: UUID?, workspaceID: String?, message: String)
 }
 
 nonisolated enum OrchestratorClientKey: DependencyKey {
