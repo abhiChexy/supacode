@@ -119,6 +119,14 @@ nonisolated final class OrchestratorRuntime: @unchecked Sendable {
     )
   }
 
+  func inspectSession(conversationID: UUID) async throws -> [String: Any]? {
+    try await request(
+      method: "GET",
+      path: "/sessions/\(conversationID.uuidString)/inspect",
+      body: nil
+    )
+  }
+
   // MARK: - Sidecar lifecycle
 
   private func spawnSidecar(bridgePort: UInt16, sharedToken: String) throws {

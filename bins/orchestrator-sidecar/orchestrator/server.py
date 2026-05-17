@@ -120,6 +120,23 @@ async def interrupt_session(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
+async def session_inspect(request: web.Request) -> web.Response:
+    if not _check_auth(request):
+        return web.Response(status=401)
+    cid = request.match_info["conversation_id"]
+    session = _SESSIONS.get(cid)
+    if session is None:
+        return web.Response(status=404)
+    mcp = await session.get_mcp_status()
+    ctx = await session.get_context_usage()
+    agents = await session.list_agents()
+    return web.json_response({
+        "mcp_servers": mcp,
+        "context_usage": ctx,
+        "agents": agents,
+    })
+
+
 async def delete_session(request: web.Request) -> web.Response:
     if not _check_auth(request):
         return web.Response(status=401)
@@ -156,6 +173,7 @@ async def run_server(*, supacode_port: int, bind_port: int, shared_token: str, p
         web.post("/sessions/{conversation_id}/messages", send_message),
         web.post("/sessions/{conversation_id}/interrupt", interrupt_session),
         web.post("/sessions/{conversation_id}/model", set_model),
+        web.get("/sessions/{conversation_id}/inspect", session_inspect),
         web.delete("/sessions/{conversation_id}", delete_session),
         web.get("/stream", stream),
     ])

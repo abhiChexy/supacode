@@ -9,6 +9,7 @@ struct OrchestratorChatView: View {
   let conversation: Conversation
   @State private var draft: String = ""
   @State private var isUserScrolledAway = false
+  @State private var isInspectorPresented = false
 
   private var isInFlight: Bool {
     store.inFlightConversationIDs.contains(conversation.id)
@@ -37,6 +38,9 @@ struct OrchestratorChatView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Theme.Color.backgroundSecondary)
     .foregroundStyle(Theme.Color.textPrimary)
+    .sheet(isPresented: $isInspectorPresented) {
+      SessionInspectorView(conversationID: conversation.id)
+    }
   }
 
   /// The most-recently-issued tool_use that has no matching tool_result yet,
@@ -277,6 +281,17 @@ struct OrchestratorChatView: View {
       }
       Pill(icon: "folder", label: cwdShortLabel(runtime.cwd ?? NSHomeDirectory()))
       Spacer()
+      Button {
+        isInspectorPresented = true
+      } label: {
+        Image(systemName: "info.circle")
+          .font(.system(size: 12))
+          .foregroundStyle(Theme.Color.textSecondary)
+          .frame(width: 24, height: 24)
+      }
+      .buttonStyle(.plain)
+      .help("MCP servers, context usage, subagents")
+
       Button(action: presentAttachmentPicker) {
         Image(systemName: "paperclip")
           .font(.system(size: 12))
@@ -373,21 +388,16 @@ private struct SlashCommandSpec: Identifiable, Hashable {
   let description: String
   var id: String { name }
 
+  // Only commands that work as plain prompts to the agent. The CLI's
+  // interactive built-ins (/mcp, /agents, /clear, /resume, /compact,
+  // /heapdump, /context, /usage) are parsed by the claude REPL itself and
+  // don't round-trip through the SDK — they'd come back as "not available."
+  // We surface those through dedicated UI affordances (model pill,
+  // settings sheet) instead.
   static let all: [SlashCommandSpec] = [
-    .init(name: "mcp", description: "Manage MCP servers"),
-    .init(name: "agents", description: "List available subagents"),
-    .init(name: "clear", description: "Clear conversation context"),
-    .init(name: "compact", description: "Compact context to save tokens"),
-    .init(name: "context", description: "Show context window usage"),
-    .init(name: "resume", description: "Resume a previous session"),
-    .init(name: "usage", description: "Show token usage and cost"),
-    .init(name: "extra-usage", description: "Detailed usage breakdown"),
-    .init(name: "init", description: "Initialize CLAUDE.md in this dir"),
-    .init(name: "review", description: "Review a PR"),
+    .init(name: "review", description: "Review the current PR / branch"),
     .init(name: "security-review", description: "Security review of changes"),
-    .init(name: "insights", description: "Insights about your usage"),
-    .init(name: "goal", description: "Set or view session goal"),
-    .init(name: "heapdump", description: "Dump current heap state"),
+    .init(name: "init", description: "Initialize a CLAUDE.md in cwd"),
   ]
 }
 

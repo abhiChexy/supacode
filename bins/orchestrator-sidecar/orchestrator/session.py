@@ -166,6 +166,43 @@ class OrchestratorSession:
                 traceback.print_exc()
                 yield {"type": "error", "message": str(exc)}
 
+    async def get_mcp_status(self) -> list[dict[str, Any]]:
+        if self._client is None:
+            return []
+        try:
+            status = await self._client.get_mcp_status()
+            return status if isinstance(status, list) else []
+        except Exception as exc:
+            print(f"[session] get_mcp_status failed: {exc}", flush=True)
+            return []
+
+    async def get_context_usage(self) -> dict[str, Any]:
+        if self._client is None:
+            return {}
+        try:
+            usage = await self._client.get_context_usage()
+            if hasattr(usage, "__dict__"):
+                return dict(usage.__dict__)
+            if isinstance(usage, dict):
+                return usage
+            return {"raw": repr(usage)}
+        except Exception as exc:
+            print(f"[session] get_context_usage failed: {exc}", flush=True)
+            return {}
+
+    async def list_agents(self) -> list[str]:
+        if self._client is None:
+            return []
+        try:
+            info = await self._client.get_server_info()
+            agents = info.get("agents") if info else None
+            if isinstance(agents, list):
+                return [str(a) for a in agents]
+            return []
+        except Exception as exc:
+            print(f"[session] list_agents failed: {exc}", flush=True)
+            return []
+
     async def interrupt(self) -> None:
         if self._client is None:
             return

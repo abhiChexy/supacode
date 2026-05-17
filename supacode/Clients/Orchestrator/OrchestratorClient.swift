@@ -11,6 +11,7 @@ nonisolated struct OrchestratorClient: Sendable {
   var killSession: @Sendable (_ conversationID: UUID) async throws -> Void
   var interruptSession: @Sendable (_ conversationID: UUID) async throws -> Void
   var setModel: @Sendable (_ conversationID: UUID, _ model: String) async throws -> Void
+  var inspectSession: @Sendable (_ conversationID: UUID) async throws -> SessionInspection
   var events: @Sendable () -> AsyncStream<OrchestratorEvent>
   var isReady: @Sendable () -> Bool
 
@@ -36,6 +37,10 @@ nonisolated struct OrchestratorClient: Sendable {
     setModel: { conversationID, model in
       try await OrchestratorRuntime.shared.setModel(conversationID: conversationID, model: model)
     },
+    inspectSession: { conversationID in
+      let raw = try await OrchestratorRuntime.shared.inspectSession(conversationID: conversationID) ?? [:]
+      return SessionInspection(raw: raw)
+    },
     events: { OrchestratorRuntime.shared.events() },
     isReady: { OrchestratorRuntime.shared.isReady }
   )
@@ -46,9 +51,39 @@ nonisolated struct OrchestratorClient: Sendable {
     killSession: { _ in },
     interruptSession: { _ in },
     setModel: { _, _ in },
+    inspectSession: { _ in .init(raw: [:]) },
     events: { AsyncStream { $0.finish() } },
     isReady: { false }
   )
+}
+
+nonisolated struct SessionInspection: Sendable {
+  let mcpServers: [MCPServerStatus]
+  let contextUsage: [String: String]
+  let agents: [String]
+
+  init(raw: [String: Any]) {
+    let rawMCP = raw["mcp_servers"] as? [[String: Any]] ?? []
+    self.mcpServers = rawMCP.map {
+      MCPServerStatus(
+        name: $0["name"] as? String ?? "?",
+        status: $0["status"] as? String ?? "unknown"
+      )
+    }
+    let rawCtx = raw["context_usage"] as? [String: Any] ?? [:]
+    var ctx: [String: String] = [:]
+    for (k, v) in rawCtx {
+      ctx[k] = String(describing: v)
+    }
+    self.contextUsage = ctx
+    self.agents = raw["agents"] as? [String] ?? []
+  }
+}
+
+nonisolated struct MCPServerStatus: Identifiable, Sendable {
+  var id: String { name }
+  let name: String
+  let status: String
 }
 
 nonisolated enum OrchestratorEvent: Equatable, Sendable {
