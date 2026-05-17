@@ -25,6 +25,23 @@ struct ConversationFeature {
     var totalCacheReadTokens: Int = 0
     var totalCacheCreationTokens: Int = 0
     var totalCostUSD: Double = 0
+    /// Tokens currently sitting in the model's context window after the last
+    /// turn (= input + cache_read + cache_creation). Resets each turn —
+    /// this is window utilization, not cumulative spend.
+    var lastTurnContextTokens: Int = 0
+
+    /// Context window size in tokens, derived from the model name.
+    var contextWindow: Int {
+      guard let model else { return 200_000 }
+      if model.contains("1m") || model.contains("[1m]") { return 1_000_000 }
+      if model.lowercased().contains("opus") { return 1_000_000 }
+      return 200_000
+    }
+
+    var contextPercentUsed: Double {
+      guard contextWindow > 0 else { return 0 }
+      return Double(lastTurnContextTokens) / Double(contextWindow)
+    }
   }
 
   enum Action: Equatable {
@@ -269,6 +286,8 @@ struct ConversationFeature {
       runtime.totalCacheReadTokens += cacheReadTokens
       runtime.totalCacheCreationTokens += cacheCreationTokens
       if let costUSD { runtime.totalCostUSD += costUSD }
+      // Effective context-window usage for the latest turn.
+      runtime.lastTurnContextTokens = inputTokens + cacheReadTokens + cacheCreationTokens
       state.runtimeByConversationID[conversationID] = runtime
       return .none
     }

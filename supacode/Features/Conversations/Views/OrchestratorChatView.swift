@@ -286,10 +286,12 @@ struct OrchestratorChatView: View {
           store.send(.setModel(conversationID: conversation.id, model: model))
         }
       )
-      if runtime.totalInputTokens > 0 || runtime.totalOutputTokens > 0 {
-        Pill(icon: "gauge.medium", label: usageLabel)
-          .help(usageTooltip)
-      }
+      ContextGaugePill(
+        percentUsed: runtime.contextPercentUsed,
+        usedTokens: runtime.lastTurnContextTokens,
+        windowTokens: runtime.contextWindow
+      )
+      .help(contextTooltip)
       Pill(icon: "folder", label: cwdShortLabel(runtime.cwd ?? NSHomeDirectory()))
         .help("Working directory: \(runtime.cwd ?? NSHomeDirectory())")
       Spacer()
@@ -345,24 +347,22 @@ struct OrchestratorChatView: View {
     .padding(.bottom, Theme.Spacing.xs)
   }
 
-  private var usageLabel: String {
-    let total = runtime.totalInputTokens + runtime.totalOutputTokens
-    let formatted: String
-    if total >= 1_000_000 { formatted = String(format: "%.1fM", Double(total) / 1_000_000) }
-    else if total >= 1_000 { formatted = String(format: "%.1fk", Double(total) / 1_000) }
-    else { formatted = "\(total)" }
-    if runtime.totalCostUSD > 0 {
-      return "\(formatted) · $\(String(format: "%.2f", runtime.totalCostUSD))"
-    }
-    return formatted
+  private var contextTooltip: String {
+    let pct = Int((runtime.contextPercentUsed * 100).rounded())
+    return """
+    Context window: \(pct)% used
+    \(Self.compact(runtime.lastTurnContextTokens)) / \(Self.compact(runtime.contextWindow)) tokens
+
+    Cost this conversation: $\(String(format: "%.4f", runtime.totalCostUSD))
+    Total input · output · cache reads:
+    \(runtime.totalInputTokens) · \(runtime.totalOutputTokens) · \(runtime.totalCacheReadTokens)
+    """
   }
 
-  private var usageTooltip: String {
-    """
-    \(runtime.totalInputTokens) input + \(runtime.totalOutputTokens) output tokens
-    \(runtime.totalCacheReadTokens) cache reads
-    Cost so far: $\(String(format: "%.4f", runtime.totalCostUSD))
-    """
+  static func compact(_ n: Int) -> String {
+    if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
+    if n >= 1_000 { return String(format: "%.1fk", Double(n) / 1_000) }
+    return "\(n)"
   }
 
   private func cwdShortLabel(_ path: String) -> String {
@@ -515,6 +515,41 @@ private struct Pill: View {
         .foregroundStyle(Theme.Color.textSecondary)
         .lineLimit(1)
         .truncationMode(.middle)
+    }
+    .padding(.horizontal, Theme.Spacing.s)
+    .padding(.vertical, 4)
+    .background(Theme.Color.backgroundPrimary.opacity(0.6))
+    .clipShape(Capsule())
+  }
+}
+
+/// Live context-window utilization gauge. Replaces the opaque "789 · $0.18"
+/// pill — that was just a number with no sense of how close we are to the
+/// limit.
+private struct ContextGaugePill: View {
+  let percentUsed: Double
+  let usedTokens: Int
+  let windowTokens: Int
+
+  private var fill: Color {
+    if percentUsed >= 0.85 { return Theme.Color.statusError }
+    if percentUsed >= 0.6 { return Theme.Color.statusWarning }
+    return Theme.Color.statusSuccess
+  }
+
+  var body: some View {
+    HStack(spacing: 6) {
+      ZStack(alignment: .leading) {
+        Capsule()
+          .fill(Theme.Color.backgroundPrimary.opacity(0.8))
+          .frame(width: 28, height: 6)
+        Capsule()
+          .fill(fill)
+          .frame(width: max(1, min(28, 28 * percentUsed)), height: 6)
+      }
+      Text(usedTokens == 0 ? "context" : "\(Int((percentUsed * 100).rounded()))% · \(OrchestratorChatView.compact(windowTokens))")
+        .font(Theme.Font.metadata)
+        .foregroundStyle(Theme.Color.textSecondary)
     }
     .padding(.horizontal, Theme.Spacing.s)
     .padding(.vertical, 4)

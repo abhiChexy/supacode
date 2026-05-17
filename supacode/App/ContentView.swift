@@ -35,7 +35,12 @@ struct ContentView: View {
       }
       .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
       .safeAreaInset(edge: .bottom, spacing: 0) {
-        SidebarBottomCardView(store: store)
+        VStack(spacing: 0) {
+          ConversationTotalsCard(
+            store: store.scope(state: \.conversations, action: \.conversations)
+          )
+          SidebarBottomCardView(store: store)
+        }
       }
     } detail: {
       detailPane
