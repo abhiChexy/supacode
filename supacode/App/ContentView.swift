@@ -43,7 +43,7 @@ struct ContentView: View {
       detailPane
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Theme.Color.backgroundSecondary)
+    .background(Theme.Color.backgroundSecondary.ignoresSafeArea())
     .disabled(!store.repositories.isInitialLoadComplete)
     .onChange(of: scenePhase) { _, newValue in
       store.send(.scenePhaseChanged(newValue))
@@ -128,25 +128,29 @@ struct ContentView: View {
 
   @ViewBuilder
   private var sidebar: some View {
-    switch sidebarMode {
-    case .collapsed:
-      ConversationsSidebarRail(
-        store: store.scope(state: \.conversations, action: \.conversations),
-        onExpand: toggleLeftSidebar
-      )
-    case .expanded:
-      VStack(spacing: 0) {
-        ConversationsSidebarSectionView(
-          store: store.scope(state: \.conversations, action: \.conversations)
+    Group {
+      switch sidebarMode {
+      case .collapsed:
+        ConversationsSidebarRail(
+          store: store.scope(state: \.conversations, action: \.conversations),
+          onExpand: toggleLeftSidebar
         )
-        SidebarView(store: repositoriesStore, terminalManager: terminalManager)
-        ConversationTotalsCard(
-          store: store.scope(state: \.conversations, action: \.conversations)
-        )
-        SidebarBottomCardView(store: store)
+      case .expanded:
+        VStack(spacing: 0) {
+          ConversationsSidebarSectionView(
+            store: store.scope(state: \.conversations, action: \.conversations)
+          )
+          SidebarView(store: repositoriesStore, terminalManager: terminalManager)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+          ConversationTotalsCard(
+            store: store.scope(state: \.conversations, action: \.conversations)
+          )
+          SidebarBottomCardView(store: store)
+        }
       }
-      .background(Theme.Color.backgroundPrimary)
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Theme.Color.backgroundPrimary)
   }
 
   @ViewBuilder
