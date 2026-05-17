@@ -48,6 +48,7 @@ struct ContentView: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .ignoresSafeArea(edges: .top)
     .background(Theme.Color.backgroundSecondary.ignoresSafeArea())
     .containerBackground(Theme.Color.backgroundPrimary, for: .window)
     .disabled(!store.repositories.isInitialLoadComplete)
@@ -178,7 +179,7 @@ struct ContentView: View {
     }
     .padding(.horizontal, Theme.Spacing.s)
     .frame(height: 36)
-    .background(Theme.Color.backgroundPrimary)
+    .background(Theme.Color.backgroundPrimary.ignoresSafeArea(edges: .top))
   }
 
   @ViewBuilder
