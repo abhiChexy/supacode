@@ -1,3 +1,4 @@
+import Combine
 import ComposableArchitecture
 import SupacodeSettingsShared
 import SwiftUI
@@ -28,11 +29,34 @@ struct OrchestratorChatView: View {
             .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
       }
+      if let activeTool = activeToolDescriptor {
+        ActiveToolBar(tool: activeTool)
+      }
       composer
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Theme.Color.backgroundSecondary)
     .foregroundStyle(Theme.Color.textPrimary)
+  }
+
+  /// The most-recently-issued tool_use that has no matching tool_result yet,
+  /// when the turn is in flight. Drives the active-tool status bar.
+  private var activeToolDescriptor: ActiveToolDescriptor? {
+    guard isInFlight else { return nil }
+    let messages = conversation.orchestratorMessages
+    let resolvedIDs = Set(
+      messages
+        .filter { $0.role == .toolResult }
+        .compactMap { JSON.string($0.content, key: "tool_use_id") }
+    )
+    guard let last = messages.last(where: {
+      $0.role == .toolUse
+        && !resolvedIDs.contains(JSON.string($0.content, key: "id") ?? "")
+    }) else { return nil }
+    return ActiveToolDescriptor(
+      tool: JSON.string(last.content, key: "tool") ?? "tool",
+      startedAt: last.timestamp
+    )
   }
 
   // MARK: Header
@@ -199,6 +223,17 @@ struct OrchestratorChatView: View {
 
   private var composer: some View {
     VStack(alignment: .leading, spacing: 0) {
+      if let suggestions = slashSuggestions {
+        SlashCommandMenu(
+          query: slashQuery,
+          suggestions: suggestions,
+          onPick: { command in
+            draft = "/" + command + " "
+          }
+        )
+        .padding(.horizontal, Theme.Spacing.m)
+        .padding(.top, Theme.Spacing.s)
+      }
       ComposerTextEditor(text: $draft, onCommit: send)
         .frame(minHeight: 40, maxHeight: 200)
         .padding(.horizontal, Theme.Spacing.m)
@@ -210,6 +245,22 @@ struct OrchestratorChatView: View {
     .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.input))
     .overlay(RoundedRectangle(cornerRadius: Theme.Radius.input).stroke(Theme.Color.borderSubtle, lineWidth: 1))
     .padding(Theme.Spacing.m)
+  }
+
+  private var slashQuery: String {
+    guard draft.hasPrefix("/") else { return "" }
+    let afterSlash = draft.dropFirst()
+    if let space = afterSlash.firstIndex(of: " ") {
+      return String(afterSlash[..<space])
+    }
+    return String(afterSlash)
+  }
+
+  private var slashSuggestions: [SlashCommandSpec]? {
+    guard draft.hasPrefix("/"), !draft.contains(" ") else { return nil }
+    let q = slashQuery.lowercased()
+    let matches = SlashCommandSpec.all.filter { q.isEmpty || $0.name.contains(q) }
+    return matches.isEmpty ? nil : Array(matches.prefix(8))
   }
 
   private var composerToolbar: some View {
@@ -225,6 +276,14 @@ struct OrchestratorChatView: View {
       }
       Pill(icon: "folder", label: cwdShortLabel(runtime.cwd ?? NSHomeDirectory()))
       Spacer()
+      Button(action: presentAttachmentPicker) {
+        Image(systemName: "paperclip")
+          .font(.system(size: 12))
+          .foregroundStyle(Theme.Color.textSecondary)
+          .frame(width: 24, height: 24)
+      }
+      .buttonStyle(.plain)
+      .help("Attach file path")
       if isInFlight {
         Button {
           store.send(.interruptCurrent(conversationID: conversation.id))
@@ -287,6 +346,128 @@ struct OrchestratorChatView: View {
     draft = ""
     store.send(.sendUserMessage(conversationID: conversation.id, content: content))
   }
+
+  private func presentAttachmentPicker() {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = true
+    panel.directoryURL = URL(fileURLWithPath: runtime.cwd ?? NSHomeDirectory())
+    if panel.runModal() == .OK {
+      let paths = panel.urls.map { $0.path(percentEncoded: false) }
+      let snippet = paths.map { "@\($0)" }.joined(separator: " ")
+      if draft.isEmpty {
+        draft = snippet + " "
+      } else if draft.hasSuffix(" ") {
+        draft += snippet + " "
+      } else {
+        draft += " " + snippet + " "
+      }
+    }
+  }
+}
+
+private struct SlashCommandSpec: Identifiable, Hashable {
+  let name: String
+  let description: String
+  var id: String { name }
+
+  static let all: [SlashCommandSpec] = [
+    .init(name: "mcp", description: "Manage MCP servers"),
+    .init(name: "agents", description: "List available subagents"),
+    .init(name: "clear", description: "Clear conversation context"),
+    .init(name: "compact", description: "Compact context to save tokens"),
+    .init(name: "context", description: "Show context window usage"),
+    .init(name: "resume", description: "Resume a previous session"),
+    .init(name: "usage", description: "Show token usage and cost"),
+    .init(name: "extra-usage", description: "Detailed usage breakdown"),
+    .init(name: "init", description: "Initialize CLAUDE.md in this dir"),
+    .init(name: "review", description: "Review a PR"),
+    .init(name: "security-review", description: "Security review of changes"),
+    .init(name: "insights", description: "Insights about your usage"),
+    .init(name: "goal", description: "Set or view session goal"),
+    .init(name: "heapdump", description: "Dump current heap state"),
+  ]
+}
+
+private struct SlashCommandMenu: View {
+  let query: String
+  let suggestions: [SlashCommandSpec]
+  let onPick: (String) -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      ForEach(suggestions) { cmd in
+        Button {
+          onPick(cmd.name)
+        } label: {
+          HStack(spacing: Theme.Spacing.s) {
+            Text("/" + cmd.name)
+              .font(Theme.Font.monoSmall)
+              .foregroundStyle(Theme.Color.textPrimary)
+            Text(cmd.description)
+              .font(Theme.Font.metadata)
+              .foregroundStyle(Theme.Color.textSecondary)
+              .lineLimit(1)
+            Spacer()
+          }
+          .padding(.horizontal, Theme.Spacing.s)
+          .padding(.vertical, 6)
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(Color.clear)
+        .onHover { hovering in
+          // SwiftUI Menu lacks native row hover; visual feedback via list
+          _ = hovering
+        }
+      }
+    }
+    .padding(Theme.Spacing.xs)
+    .background(Theme.Color.backgroundPrimary.opacity(0.6))
+    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+    .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.Color.borderSubtle, lineWidth: 1))
+  }
+}
+
+private struct ActiveToolDescriptor: Equatable {
+  let tool: String
+  let startedAt: Date
+}
+
+private struct ActiveToolBar: View {
+  let tool: ActiveToolDescriptor
+  @State private var now = Date()
+  private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+  private var elapsed: String {
+    let seconds = Int(now.timeIntervalSince(tool.startedAt))
+    return seconds <= 0 ? "now" : "\(seconds)s"
+  }
+
+  var body: some View {
+    HStack(spacing: Theme.Spacing.s) {
+      ProgressView()
+        .controlSize(.small)
+        .scaleEffect(0.7)
+        .frame(width: 14, height: 14)
+      Text("Running ")
+        .font(Theme.Font.metadata)
+        .foregroundStyle(Theme.Color.textSecondary)
+      + Text(tool.tool)
+        .font(Theme.Font.monoSmall)
+        .foregroundStyle(Theme.Color.textPrimary)
+      Spacer()
+      Text(elapsed)
+        .font(Theme.Font.monoTiny)
+        .foregroundStyle(Theme.Color.textTertiary)
+    }
+    .padding(.horizontal, Theme.Spacing.l)
+    .padding(.vertical, Theme.Spacing.xs)
+    .background(Theme.Color.backgroundPrimary.opacity(0.6))
+    .overlay(Divider().background(Theme.Color.borderSubtle), alignment: .top)
+    .onReceive(timer) { now = $0 }
+  }
 }
 
 private struct Pill: View {
@@ -328,7 +509,7 @@ private struct ModelPickerPill: View {
   let onPick: (String) -> Void
 
   private var displayLabel: String {
-    guard let currentModel else { return "Model" }
+    guard let currentModel, !currentModel.isEmpty else { return "Default" }
     if let match = modelOptions.first(where: { currentModel.hasPrefix($0.id) || currentModel == $0.id }) {
       return match.display
     }

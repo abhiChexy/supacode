@@ -17,6 +17,7 @@ struct ContentView: View {
   @Environment(\.scenePhase) private var scenePhase
   @Environment(GhosttyShortcutManager.self) private var ghosttyShortcuts
   @State private var leftSidebarVisibility: NavigationSplitViewVisibility = .all
+  @State private var isSearchPresented: Bool = false
 
   init(store: StoreOf<AppFeature>, terminalManager: WorktreeTerminalManager) {
     self.store = store
@@ -85,6 +86,16 @@ struct ContentView: View {
     }
     .focusedSceneValue(\.toggleLeftSidebarAction, toggleLeftSidebar)
     .focusedSceneValue(\.revealInSidebarAction, revealInSidebarAction)
+    .sheet(isPresented: $isSearchPresented) {
+      ConversationSearchView(
+        store: store.scope(state: \.conversations, action: \.conversations)
+      )
+    }
+    .background(
+      Button("") { isSearchPresented = true }
+        .keyboardShortcut("f", modifiers: .command)
+        .hidden()
+    )
     .overlay {
       CommandPaletteOverlayView(
         store: store.scope(state: \.commandPalette, action: \.commandPalette),
