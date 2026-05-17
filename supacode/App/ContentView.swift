@@ -123,8 +123,12 @@ struct ContentView: View {
         )
         .frame(minWidth: 240, idealWidth: 320, maxWidth: 420)
       }
-    } else {
+    } else if store.repositories.selectedWorktreeID != nil {
       WorktreeDetailView(store: store, terminalManager: terminalManager)
+    } else {
+      ConversationEmptyStateView(
+        store: store.scope(state: \.conversations, action: \.conversations)
+      )
     }
   }
 

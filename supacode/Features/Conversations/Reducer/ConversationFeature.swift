@@ -111,23 +111,34 @@ struct ConversationFeature {
           }
         )
 
-      case .sessionStarted(let conversationID, let sessionID):
-        guard var conversation = state.conversations[id: conversationID] else { return .none }
-        conversation.orchestratorSessionID = sessionID
-        state.conversations[id: conversationID] = conversation
-        return persist(conversation)
-
       case .sendUserMessage(let conversationID, let content):
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .none }
         let message = OrchestratorMessage(id: uuid(), role: .user, content: trimmed, timestamp: date.now)
         state.inFlightConversationIDs.insert(conversationID)
-        return .merge(
+        // Auto-title from the first user message — mirror Claude Desktop's
+        // behavior. Only applies when the title is still the placeholder.
+        var effects: [Effect<Action>] = [
           .send(.appendMessage(conversationID: conversationID, message: message)),
           .run { _ in
             try? await orchestrator.sendUserMessage(conversationID, trimmed)
-          }
-        )
+          },
+        ]
+        if var convo = state.conversations[id: conversationID],
+          convo.title.isEmpty || convo.title == "Untitled",
+          convo.orchestratorMessages.allSatisfy({ $0.role != .user })
+        {
+          convo.title = Self.deriveTitle(from: trimmed)
+          state.conversations[id: conversationID] = convo
+          effects.append(persist(convo))
+        }
+        return .merge(effects)
+
+      case .sessionStarted(let conversationID, let sessionID):
+        guard var conversation = state.conversations[id: conversationID] else { return .none }
+        conversation.orchestratorSessionID = sessionID
+        state.conversations[id: conversationID] = conversation
+        return persist(conversation)
 
       case .orchestratorEvent(let event):
         return handle(event: event, state: &state)
@@ -252,6 +263,22 @@ struct ConversationFeature {
       state.runtimeByConversationID[conversationID] = runtime
       return .none
     }
+  }
+
+  /// Derive a short conversation title from the first user message. Single
+  /// line, up to ~60 chars at a word boundary, no trailing punctuation.
+  static func deriveTitle(from message: String) -> String {
+    let firstLine = message.split(whereSeparator: \.isNewline).first.map(String.init) ?? message
+    let collapsed = firstLine.replacing(/\s+/, with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+    let limit = 60
+    guard collapsed.count > limit else {
+      return collapsed.isEmpty ? "Untitled" : collapsed
+    }
+    let prefix = collapsed.prefix(limit)
+    if let lastSpace = prefix.lastIndex(of: " ") {
+      return String(collapsed[..<lastSpace]) + "…"
+    }
+    return String(prefix) + "…"
   }
 
   private func persist(_ conversation: Conversation) -> Effect<Action> {

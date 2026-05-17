@@ -6,8 +6,6 @@ import SwiftUI
 /// repository sidebar.
 struct ConversationsSidebarSectionView: View {
   @Bindable var store: StoreOf<ConversationFeature>
-  @State private var newConversationTitle: String = ""
-  @State private var isAddingConversation = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -15,25 +13,23 @@ struct ConversationsSidebarSectionView: View {
         .padding(.horizontal, Theme.Spacing.m)
         .padding(.vertical, Theme.Spacing.s)
 
-      if isAddingConversation {
-        TextField("Conversation title", text: $newConversationTitle)
-          .textFieldStyle(.plain)
-          .font(Theme.Font.sidebarRow)
-          .padding(.horizontal, Theme.Spacing.s)
-          .padding(.vertical, Theme.Spacing.xs)
-          .background(Theme.Color.backgroundElevated)
-          .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.pill))
-          .padding(.horizontal, Theme.Spacing.m)
-          .padding(.bottom, Theme.Spacing.s)
-          .onSubmit(commitNewConversation)
-      }
-
       if store.conversations.isEmpty {
-        Text("No conversations yet")
-          .font(Theme.Font.metadata)
-          .foregroundStyle(Theme.Color.textTertiary)
+        Button {
+          createConversation()
+        } label: {
+          HStack(spacing: Theme.Spacing.s) {
+            Image(systemName: "plus.circle")
+              .font(.system(size: 12))
+            Text("New conversation")
+              .font(Theme.Font.sidebarRow)
+          }
+          .foregroundStyle(Theme.Color.textSecondary)
           .padding(.horizontal, Theme.Spacing.m)
-          .padding(.bottom, Theme.Spacing.s)
+          .padding(.vertical, 6)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
       } else {
         ForEach(store.conversations) { conversation in
           row(for: conversation)
@@ -54,15 +50,18 @@ struct ConversationsSidebarSectionView: View {
         .textCase(.uppercase)
       Spacer()
       Button {
-        isAddingConversation.toggle()
-        if !isAddingConversation { newConversationTitle = "" }
+        createConversation()
       } label: {
-        Image(systemName: "plus")
-          .font(.system(size: 10, weight: .semibold))
+        Image(systemName: "square.and.pencil")
+          .font(.system(size: 12, weight: .medium))
           .foregroundStyle(Theme.Color.textSecondary)
+          .frame(width: 22, height: 22)
+          .background(Theme.Color.backgroundElevated)
+          .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.pill))
       }
-      .buttonStyle(.borderless)
-      .help("New Conversation")
+      .buttonStyle(.plain)
+      .help("New Conversation (⌘N)")
+      .keyboardShortcut("n", modifiers: .command)
     }
   }
 
@@ -100,11 +99,8 @@ struct ConversationsSidebarSectionView: View {
     }
   }
 
-  private func commitNewConversation() {
-    let title = newConversationTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !title.isEmpty else { return }
-    store.send(.createConversation(title: title))
-    newConversationTitle = ""
-    isAddingConversation = false
+  private func createConversation() {
+    // Empty title — auto-filled from the first user message.
+    store.send(.createConversation(title: ""))
   }
 }
