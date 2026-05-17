@@ -19,6 +19,7 @@ struct ContentView: View {
   @State private var sidebarMode: SidebarMode = .expanded
   @State private var sidebarWidth: CGFloat = 260
   @State private var isSearchPresented: Bool = false
+  @State private var inspectedWorkspaceID: String?
 
   private enum SidebarMode { case expanded, collapsed }
   private var effectiveSidebarWidth: CGFloat {
@@ -99,6 +100,16 @@ struct ContentView: View {
     .sheet(isPresented: $isSearchPresented) {
       ConversationSearchView(
         store: store.scope(state: \.conversations, action: \.conversations)
+      )
+    }
+    .sheet(item: Binding<InspectorTarget?>(
+      get: { inspectedWorkspaceID.map(InspectorTarget.init) },
+      set: { inspectedWorkspaceID = $0?.id }
+    )) { target in
+      WorkspaceTerminalSheet(
+        worktreeID: target.id,
+        store: store,
+        terminalManager: terminalManager
       )
     }
     .background(
@@ -226,7 +237,8 @@ struct ContentView: View {
         Divider().background(Theme.Color.borderSubtle)
         ConversationRightPaneView(
           conversation: conversation,
-          knownWorktrees: knownWorktreeCards
+          knownWorktrees: knownWorktreeCards,
+          onInspect: { id in inspectedWorkspaceID = id }
         )
         .id(conversation.id)
         .frame(minWidth: 240, idealWidth: 320, maxWidth: 420)
@@ -239,6 +251,10 @@ struct ContentView: View {
         store: store.scope(state: \.conversations, action: \.conversations)
       )
     }
+  }
+
+  private struct InspectorTarget: Identifiable, Hashable {
+    let id: String
   }
 
   /// Cmd+W: close the active conversation. Falls back to the system close

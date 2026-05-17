@@ -7,6 +7,7 @@ import SwiftUI
 struct ConversationRightPaneView: View {
   let conversation: Conversation
   let knownWorktrees: [WorkspaceCardModel]
+  let onInspect: (String) -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -18,7 +19,7 @@ struct ConversationRightPaneView: View {
             emptyState
           } else {
             ForEach(workspaceCards, id: \.id) { card in
-              WorkspaceCard(card: card)
+              WorkspaceCard(card: card, onInspect: { onInspect(card.id) })
             }
             if conversation.workspaceIDs.count > workspaceCards.count {
               ghostCards
@@ -117,6 +118,7 @@ struct WorkspaceCardModel: Equatable, Identifiable {
 
 private struct WorkspaceCard: View {
   let card: WorkspaceCardModel
+  let onInspect: () -> Void
   @State private var hovering = false
 
   var body: some View {
@@ -153,6 +155,13 @@ private struct WorkspaceCard: View {
         .truncationMode(.middle)
 
       HStack(spacing: Theme.Spacing.xs) {
+        Button(action: onInspect) {
+          actionLabel("View terminal", icon: "terminal.fill")
+            .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+        .help("Watch the child agent live")
+
         Button {
           NSWorkspace.shared.open(URL(fileURLWithPath: card.path))
         } label: {
@@ -223,7 +232,7 @@ private struct WorkspaceCard: View {
     .foregroundStyle(Theme.Color.textSecondary)
     .padding(.horizontal, 6)
     .padding(.vertical, 3)
-    .background(Theme.Color.backgroundPrimary.opacity(0.6))
+    .background(text == "View terminal" ? Theme.Color.accent : Theme.Color.backgroundPrimary.opacity(0.6))
     .clipShape(Capsule())
   }
 
